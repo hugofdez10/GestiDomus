@@ -8,35 +8,30 @@ import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { EditExpenseForm } from "./edit-expense-form"
 
-// Lista de meses para el filtro
-const MONTHS = [
-  { value: "01", label: "Enero" },
-  { value: "02", label: "Febrero" },
-  { value: "03", label: "Marzo" },
-  { value: "04", label: "Abril" },
-  { value: "05", label: "Mayo" },
-  { value: "06", label: "Junio" },
-  { value: "07", label: "Julio" },
-  { value: "08", label: "Agosto" },
-  { value: "09", label: "Septiembre" },
-  { value: "10", label: "Octubre" },
-  { value: "11", label: "Noviembre" },
-  { value: "12", label: "Diciembre" }
+const CONCEPTOS = [
+  "Seguro", "Limpieza", "Comunidad", "Electricidad", "Gas", 
+  "Agua", "IBI", "Internet", "Hipoteca", "Derrama", "Basura", "Otro"
 ]
 
-export function ExpenseList({ year }: { year: string }) {
+export function ExpenseList({ year: globalYear }: { year: string }) {
   const [expenses, setExpenses] = useState<any[]>([])
   const [properties, setProperties] = useState<any[]>([])
   
-  // Estados para nuestros filtros
+  // Filtros Locales (independientes del dashboard global)
+  const [localYear, setLocalYear] = useState(globalYear || new Date().getFullYear().toString())
   const [propertyFilter, setPropertyFilter] = useState("all")
-  const [monthFilter, setMonthFilter] = useState("all")
+  const [conceptFilter, setConceptFilter] = useState("all")
+  const [respFilter, setRespFilter] = useState("all")
+
+  // Si cambia el año global, actualizamos el local por comodidad
+  useEffect(() => {
+    setLocalYear(globalYear)
+  }, [globalYear])
 
   async function fetchData() {
-    const startDate = `${year}-01-01`
-    const endDate = `${year}-12-31`
+    const startDate = `${localYear}-01-01`
+    const endDate = `${localYear}-12-31`
 
-    // Pedimos a Supabase los gastos Y la lista de propiedades a la vez
     const [expRes, propRes] = await Promise.all([
       supabase
         .from('expenses')
@@ -51,9 +46,10 @@ export function ExpenseList({ year }: { year: string }) {
     if (propRes.data) setProperties(propRes.data)
   }
 
+  // Recargar datos cada vez que cambiemos EL AÑO LOCAL
   useEffect(() => {
     fetchData()
-  }, [year])
+  }, [localYear])
 
   async function markAsPaidByTenant(id: number) {
     const { error } = await supabase.from('expenses').update({ is_tenant_paid: true }).eq('id', id)
@@ -69,63 +65,66 @@ export function ExpenseList({ year }: { year: string }) {
     }
   }
 
-  // LA MAGIA DE LOS FILTROS: Procesamos la lista antes de mostrarla
+  // Filtramos la información descargada en vivo
   const filteredExpenses = expenses.filter(exp => {
-    // Comprobamos el inmueble
-    const matchProp = 
-      propertyFilter === "all" || 
-      (exp.property_id && exp.property_id.toString() === propertyFilter) || 
-      (propertyFilter === "general" && !exp.property_id)
-
-    // Comprobamos el mes (sacamos el mes de la fecha "YYYY-MM-DD")
-    const expenseMonth = exp.date.split('-')[1]
-    const matchMonth = monthFilter === "all" || expenseMonth === monthFilter
-
-    return matchProp && matchMonth
+    const matchProp = propertyFilter === "all" || (exp.property_id && exp.property_id.toString() === propertyFilter) || (propertyFilter === "general" && !exp.property_id)
+    const matchConcept = conceptFilter === "all" || exp.category === conceptFilter
+    const matchResp = respFilter === "all" || exp.responsibility === respFilter
+    
+    return matchProp && matchConcept && matchResp
   })
 
   return (
     <div className="bg-white p-6 rounded-xl border shadow-sm w-full">
-      
-      {/* CABECERA CON LA BARRA DE FILTROS */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-        <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-          <FileText className="w-5 h-5 text-red-500" />
-          Historial de Gastos ({year})
-        </h2>
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
+        
+        <div className="flex items-center gap-3">
+          <FileText className="w-6 h-6 text-red-500" />
+          <h2 className="text-lg font-bold text-slate-800">Historial de Gastos</h2>
+          {/* AÑO INDEPENDIENTE */}
+          <Select value={localYear} onValueChange={setLocalYear}>
+            <SelectTrigger className="w-[90px] h-8 font-black text-red-700 bg-red-50 border-red-200">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-white">
+              <SelectItem value="2025">2025</SelectItem>
+              <SelectItem value="2026">2026</SelectItem>
+              <SelectItem value="2027">2027</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         
         <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-1.5 rounded-lg border shadow-sm">
           <Filter className="w-4 h-4 text-slate-400 ml-2" />
-          <span className="text-xs font-bold text-slate-500 mr-1 uppercase tracking-wider hidden sm:inline-block">Filtrar:</span>
           
           <Select value={propertyFilter} onValueChange={setPropertyFilter}>
-            <SelectTrigger className="w-[180px] bg-white h-8 text-xs font-medium border-slate-200">
-              <SelectValue placeholder="Inmueble" />
-            </SelectTrigger>
+            <SelectTrigger className="w-[140px] bg-white h-8 text-xs font-medium border-slate-200"><SelectValue placeholder="Inmueble" /></SelectTrigger>
             <SelectContent className="bg-white">
-              <SelectItem value="all">Todos los inmuebles</SelectItem>
-              <SelectItem value="general">Gastos Generales (Sin piso)</SelectItem>
-              {properties.map(p => (
-                <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
-              ))}
+              <SelectItem value="all">Todos los Inmuebles</SelectItem>
+              <SelectItem value="general">Gastos Generales</SelectItem>
+              {properties.map(p => (<SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>))}
             </SelectContent>
           </Select>
 
-          <Select value={monthFilter} onValueChange={setMonthFilter}>
-            <SelectTrigger className="w-[130px] bg-white h-8 text-xs font-medium border-slate-200">
-              <SelectValue placeholder="Mes" />
-            </SelectTrigger>
+          <Select value={conceptFilter} onValueChange={setConceptFilter}>
+            <SelectTrigger className="w-[120px] bg-white h-8 text-xs font-medium border-slate-200"><SelectValue placeholder="Concepto" /></SelectTrigger>
             <SelectContent className="bg-white">
-              <SelectItem value="all">Todos los meses</SelectItem>
-              {MONTHS.map(m => (
-                <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-              ))}
+              <SelectItem value="all">Todo el año</SelectItem>
+              {CONCEPTOS.map(c => (<SelectItem key={c} value={c}>{c}</SelectItem>))}
+            </SelectContent>
+          </Select>
+
+          <Select value={respFilter} onValueChange={setRespFilter}>
+            <SelectTrigger className="w-[150px] bg-white h-8 text-xs font-medium border-slate-200"><SelectValue placeholder="Responsabilidad" /></SelectTrigger>
+            <SelectContent className="bg-white">
+              <SelectItem value="all">Ambas partes</SelectItem>
+              <SelectItem value="owner">Gasto Propietario</SelectItem>
+              <SelectItem value="tenant">Gasto Inquilino</SelectItem>
             </SelectContent>
           </Select>
         </div>
       </div>
       
-      {/* LA TABLA */}
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
@@ -139,12 +138,13 @@ export function ExpenseList({ year }: { year: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredExpenses.length === 0 ? (
+            {/* ... Aquí dentro va el mismo código de renderizado de la tabla de antes (filteredExpenses.map...) ... */}
+             {filteredExpenses.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-slate-500 py-10">
                   <div className="flex flex-col items-center gap-2">
                     <Filter className="w-8 h-8 text-slate-300" />
-                    <p>No se han encontrado gastos con estos filtros.</p>
+                    <p>No se han encontrado gastos con estos filtros en {localYear}.</p>
                   </div>
                 </TableCell>
               </TableRow>
@@ -186,9 +186,7 @@ export function ExpenseList({ year }: { year: string }) {
                           <FileText className="w-4 h-4" />
                         </a>
                       )}
-                      
                       <EditExpenseForm expense={exp} onUpdate={fetchData} />
-                      
                       <button onClick={() => handleDelete(exp.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors" title="Borrar Gasto">
                         <Trash2 className="w-4 h-4" />
                       </button>

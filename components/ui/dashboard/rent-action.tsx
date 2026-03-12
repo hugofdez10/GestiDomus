@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { HandCoins, CheckCircle2 } from "lucide-react"
 
 const MONTHS = [
@@ -16,30 +17,35 @@ const MONTHS = [
 export function RentAction({ onUpdate }: { onUpdate: () => void }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  
-  // Ahora solo guardamos la lista de INMUEBLES (Properties)
   const [propertiesList, setPropertiesList] = useState<any[]>([])
 
   const [formData, setFormData] = useState({
     property_id: "",
     month: new Date().getMonth().toString(),
-    year: new Date().getFullYear().toString()
+    year: new Date().getFullYear().toString(),
+    custom_amount: "" // NUEVO: Importe personalizable
   })
 
-  // Al abrir la ventana, cargamos todos los inmuebles
   useEffect(() => {
     if (open) {
       async function fetchProperties() {
-        const { data } = await supabase
-          .from('properties')
-          .select('id, name, price')
-          .order('name')
-        
+        // Ordenamos los inmuebles alfabéticamente
+        const { data } = await supabase.from('properties').select('id, name, price').order('name')
         if (data) setPropertiesList(data)
       }
       fetchProperties()
     }
   }, [open])
+
+  // Cuando elegimos un piso, rellenamos automáticamente su precio por defecto, pero dejamos que el usuario lo edite
+  const handlePropertyChange = (val: string) => {
+    const selectedProp = propertiesList.find(p => p.id.toString() === val)
+    setFormData({
+      ...formData, 
+      property_id: val,
+      custom_amount: selectedProp ? selectedProp.price.toString() : ""
+    })
+  }
 
   async function handleRegisterPayment(e: React.FormEvent) {
     e.preventDefault()
@@ -50,18 +56,15 @@ export function RentAction({ onUpdate }: { onUpdate: () => void }) {
 
     setLoading(true)
 
-    // Buscamos el precio del inmueble seleccionado
-    const selectedProperty = propertiesList.find(p => p.id.toString() === formData.property_id)
-    const amount = selectedProperty?.price || 0
+    const finalAmount = parseFloat(formData.custom_amount) || 0
 
-    // Registramos el pago asociado EXCLUSIVAMENTE al inmueble
     const { error } = await supabase
       .from('rent_payments')
       .upsert({
         property_id: parseInt(formData.property_id),
         month: parseInt(formData.month),
         year: parseInt(formData.year),
-        amount: amount,
+        amount: finalAmount, // Usamos el importe escrito a mano
         is_paid: true,
         paid_at: new Date().toISOString()
       }, { onConflict: 'property_id, month, year' })
@@ -71,9 +74,8 @@ export function RentAction({ onUpdate }: { onUpdate: () => void }) {
     } else {
       setOpen(false)
       onUpdate() 
-      window.location.reload() // Recargamos para que los "puntitos" de la tabla se actualicen
+      window.location.reload()
     }
-
     setLoading(false)
   }
 
@@ -94,20 +96,12 @@ export function RentAction({ onUpdate }: { onUpdate: () => void }) {
           
           <div className="grid gap-2">
             <Label>Inmueble</Label>
-            <Select value={formData.property_id} onValueChange={(val) => setFormData({...formData, property_id: val})}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecciona el piso..." />
-              </SelectTrigger>
+            <Select value={formData.property_id} onValueChange={handlePropertyChange}>
+              <SelectTrigger><SelectValue placeholder="Selecciona el piso..." /></SelectTrigger>
               <SelectContent className="bg-white">
-                {propertiesList.length === 0 ? (
-                  <SelectItem value="none" disabled>Cargando inmuebles...</SelectItem>
-                ) : (
-                  propertiesList.map((p) => (
-                    <SelectItem key={p.id} value={p.id.toString()}>
-                      {p.name} - {p.price}€
-                    </SelectItem>
-                  ))
-                )}
+                {propertiesList.map((p) => (
+                  <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -116,13 +110,9 @@ export function RentAction({ onUpdate }: { onUpdate: () => void }) {
             <div className="grid gap-2">
               <Label>Mes</Label>
               <Select value={formData.month} onValueChange={(val) => setFormData({...formData, month: val})}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent className="bg-white">
-                  {MONTHS.map((m, i) => (
-                    <SelectItem key={i} value={i.toString()}>{m}</SelectItem>
-                  ))}
+                  {MONTHS.map((m, i) => (<SelectItem key={i} value={i.toString()}>{m}</SelectItem>))}
                 </SelectContent>
               </Select>
             </div>
@@ -130,9 +120,7 @@ export function RentAction({ onUpdate }: { onUpdate: () => void }) {
             <div className="grid gap-2">
               <Label>Año</Label>
               <Select value={formData.year} onValueChange={(val) => setFormData({...formData, year: val})}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent className="bg-white">
                   <SelectItem value="2025">2025</SelectItem>
                   <SelectItem value="2026">2026</SelectItem>
@@ -140,6 +128,19 @@ export function RentAction({ onUpdate }: { onUpdate: () => void }) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="grid gap-2 p-3 bg-emerald-50 border border-emerald-100 rounded-lg">
+            <Label className="text-emerald-800 font-bold">Importe Cobrado (€)</Label>
+            <Input 
+              type="number" 
+              step="0.01" 
+              value={formData.custom_amount} 
+              onChange={(e) => setFormData({...formData, custom_amount: e.target.value})} 
+              className="font-black text-lg text-emerald-700 bg-white"
+              required 
+            />
+            <p className="text-[10px] text-emerald-600">Puedes modificar la cantidad si el pago fue distinto este mes.</p>
           </div>
 
           <Button type="submit" disabled={loading} className="bg-emerald-600 hover:bg-emerald-700 text-white mt-2 w-full">

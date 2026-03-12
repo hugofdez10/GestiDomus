@@ -9,6 +9,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Plus, UploadCloud, UserCircle, Home } from "lucide-react"
 
+// Lista de conceptos basada en tu documento Word
+const CONCEPTOS = [
+  "Seguro", "Limpieza", "Comunidad", "Electricidad", "Gas", 
+  "Agua", "IBI", "Internet", "Hipoteca", "Derrama", "Basura", "Otro"
+]
+
 export function AddExpenseForm({ properties }: { properties?: any[] }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -17,18 +23,19 @@ export function AddExpenseForm({ properties }: { properties?: any[] }) {
   const [propertiesList, setPropertiesList] = useState<any[]>(properties || [])
   
   const [formData, setFormData] = useState({
-    category: "",
+    category: "", // Ahora esto será el desplegable
     amount: "",
     date: new Date().toISOString().split('T')[0],
     property_id: "general",
-    responsibility: "owner", // 'owner' o 'tenant'
-    is_tenant_paid: "true"   // 'true' o 'false' (como texto para el select)
+    responsibility: "owner",
+    is_tenant_paid: "true" 
   })
 
   useEffect(() => {
     if (open) {
       async function fetchProperties() {
-        const { data } = await supabase.from('properties').select('id, name')
+        // Añadido: .order('name') para que salgan siempre ordenados
+        const { data } = await supabase.from('properties').select('id, name').order('name')
         if (data) setPropertiesList(data)
       }
       fetchProperties()
@@ -37,31 +44,31 @@ export function AddExpenseForm({ properties }: { properties?: any[] }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setLoading(true)
+    if (!formData.category) {
+      alert("Debes seleccionar un concepto.")
+      return
+    }
 
+    setLoading(true)
     let finalReceiptUrl = null
 
     if (file) {
       const fileExt = file.name.split('.').pop()
       const fileName = `gasto-${Date.now()}.${fileExt}`
       const filePath = `gastos/${fileName}`
-
       const { error: uploadError } = await supabase.storage.from('vault').upload(filePath, file)
-
       if (!uploadError) {
         const { data } = supabase.storage.from('vault').getPublicUrl(filePath)
         finalReceiptUrl = data.publicUrl
       }
     }
 
-    // Preparamos los datos exactos para la base de datos
     const newExpense: any = {
       category: formData.category,
       amount: parseFloat(formData.amount.toString()),
       date: formData.date,
       receipt_url: finalReceiptUrl,
       responsibility: formData.responsibility,
-      // Si el gasto es del propietario, siempre marcamos true. Si es del inquilino, leemos el selector.
       is_tenant_paid: formData.responsibility === 'owner' ? true : formData.is_tenant_paid === "true"
     }
 
@@ -78,7 +85,6 @@ export function AddExpenseForm({ properties }: { properties?: any[] }) {
       setFile(null)
       window.location.reload()
     }
-    
     setLoading(false)
   }
 
@@ -108,21 +114,32 @@ export function AddExpenseForm({ properties }: { properties?: any[] }) {
             </Select>
           </div>
 
+          <div className="grid gap-2">
+            <Label>Concepto</Label>
+            <Select value={formData.category} onValueChange={(val) => setFormData({...formData, category: val})}>
+              <SelectTrigger><SelectValue placeholder="Selecciona el tipo de suministro/gasto..." /></SelectTrigger>
+              <SelectContent className="bg-white">
+                {CONCEPTOS.map((c) => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="grid gap-2 p-3 bg-slate-50 border rounded-lg">
             <Label className="font-bold text-slate-700">Responsabilidad del Pago</Label>
             <Select value={formData.responsibility} onValueChange={(val) => setFormData({...formData, responsibility: val})}>
               <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
               <SelectContent className="bg-white">
                 <SelectItem value="owner">
-                  <div className="flex items-center gap-2"><Home className="w-4 h-4 text-blue-600"/> Gasto del Propietario (IBI, Seguro, etc.)</div>
+                  <div className="flex items-center gap-2"><Home className="w-4 h-4 text-blue-600"/> Gasto del Propietario</div>
                 </SelectItem>
                 <SelectItem value="tenant">
-                  <div className="flex items-center gap-2"><UserCircle className="w-4 h-4 text-orange-600"/> Gasto del Inquilino (Luz, Agua, Gas...)</div>
+                  <div className="flex items-center gap-2"><UserCircle className="w-4 h-4 text-orange-600"/> Gasto del Inquilino</div>
                 </SelectItem>
               </SelectContent>
             </Select>
 
-            {/* Si es del inquilino, preguntamos el estado */}
             {formData.responsibility === 'tenant' && (
               <div className="mt-3 pt-3 border-t border-slate-200">
                 <Label className="text-orange-700">Estado de Cobro al Inquilino</Label>
@@ -130,16 +147,11 @@ export function AddExpenseForm({ properties }: { properties?: any[] }) {
                   <SelectTrigger className="bg-white mt-1"><SelectValue /></SelectTrigger>
                   <SelectContent className="bg-white">
                     <SelectItem value="false">⚠️ PENDIENTE: Lo he pagado yo y me lo debe</SelectItem>
-                    <SelectItem value="true">✅ COBRADO: Ya me lo ha devuelto o está domiciliado a él</SelectItem>
+                    <SelectItem value="true">✅ COBRADO: Ya está devuelto o domiciliado</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             )}
-          </div>
-
-          <div className="grid gap-2">
-            <Label>Concepto (Ej: Factura Luz Marzo)</Label>
-            <Input placeholder="¿De qué es este gasto?" value={formData.category} onChange={(e) => setFormData({...formData, category: e.target.value})} required />
           </div>
 
           <div className="grid grid-cols-2 gap-4">

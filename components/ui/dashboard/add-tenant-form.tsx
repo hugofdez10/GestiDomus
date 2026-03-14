@@ -7,198 +7,199 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { UserPlus, UploadCloud } from "lucide-react"
+import { UserPlus } from "lucide-react"
 
-type AddTenantFormProps = {
-  properties?: any[]
-  onSuccess?: () => void
-}
+// Opciones de duración del contrato en meses
+const CONTRACT_DURATIONS = [
+  { label: "6 meses",   value: 6 },
+  { label: "11 meses",  value: 11 },
+  { label: "12 meses (1 año)", value: 12 },
+  { label: "24 meses (2 años)", value: 24 },
+  { label: "36 meses (3 años)", value: 36 },
+  { label: "60 meses (5 años)", value: 60 },
+  { label: "Personalizado", value: 0 },
+]
 
-export function AddTenantForm({ properties, onSuccess }: AddTenantFormProps) {
+export function AddTenantForm() {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [file, setFile] = useState<File | null>(null)
-  const [propertiesList, setPropertiesList] = useState<any[]>(properties || [])
+  const [properties, setProperties] = useState<any[]>([])
+  const [durationMonths, setDurationMonths] = useState<string>("12")
+  const [customDuration, setCustomDuration] = useState<string>("")
 
   const [formData, setFormData] = useState({
     full_name: "",
     phone: "",
-    property_id: "none",
-    contract_start: "",
+    email: "",           // ← NUEVO: email del inquilino
+    property_id: "",
+    contract_start: new Date().toISOString().split("T")[0],
     contract_end: "",
-    deposit_amount: "",
   })
 
   useEffect(() => {
     if (open) {
-      async function fetchProperties() {
-        const { data } = await supabase.from("properties").select("id, name").order("name")
-        if (data) setPropertiesList(data)
-      }
-
-      fetchProperties()
+      supabase.from("properties").select("id, name").order("name").then(({ data }) => {
+        if (data) setProperties(data)
+      })
     }
   }, [open])
 
-  function resetForm() {
-    setFormData({
-      full_name: "",
-      phone: "",
-      property_id: "none",
-      contract_start: "",
-      contract_end: "",
-      deposit_amount: "",
-    })
-    setFile(null)
-  }
+  // Calcula la fecha fin automáticamente al cambiar inicio o duración
+  useEffect(() => {
+    if (!formData.contract_start) return
+    const months = durationMonths === "0" ? parseInt(customDuration) : parseInt(durationMonths)
+    if (!months || isNaN(months)) return
+
+    const start = new Date(formData.contract_start)
+    start.setMonth(start.getMonth() + months)
+    setFormData(prev => ({
+      ...prev,
+      contract_end: start.toISOString().split("T")[0]
+    }))
+  }, [formData.contract_start, durationMonths, customDuration])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!formData.full_name.trim()) { alert("El nombre es obligatorio."); return }
+
     setLoading(true)
-
-    let finalDocumentUrl = null
-
-    if (file) {
-      const fileExt = file.name.split(".").pop()
-      const fileName = `inquilino-nuevo-${Date.now()}.${fileExt}`
-      const filePath = `inquilinos/${fileName}`
-
-      const { error: uploadError } = await supabase.storage.from("vault").upload(filePath, file)
-
-      if (!uploadError) {
-        const { data } = supabase.storage.from("vault").getPublicUrl(filePath)
-        finalDocumentUrl = data.publicUrl
-      } else {
-        alert("Error al subir el documento: " + uploadError.message)
-        setLoading(false)
-        return
-      }
-    }
-
-    const newTenant: any = {
+    const payload: any = {
       full_name: formData.full_name,
-      phone: formData.phone,
+      phone: formData.phone || null,
+      email: formData.email || null,       // ← NUEVO
       contract_start: formData.contract_start || null,
       contract_end: formData.contract_end || null,
-      deposit_amount: formData.deposit_amount ? parseFloat(formData.deposit_amount) : 0,
-      document_url: finalDocumentUrl,
     }
+    if (formData.property_id) payload.property_id = parseInt(formData.property_id)
 
-    if (formData.property_id !== "none") {
-      newTenant.property_id = parseInt(formData.property_id)
-    }
-
-    const { error } = await supabase.from("tenants").insert([newTenant])
-
+    const { error } = await supabase.from("tenants").insert([payload])
     if (error) {
-      alert("❌ Error al guardar el inquilino: " + error.message)
+      alert("❌ Error al guardar: " + error.message)
     } else {
-      resetForm()
       setOpen(false)
-      onSuccess?.()
+      setFormData({
+        full_name: "", phone: "", email: "", property_id: "",
+        contract_start: new Date().toISOString().split("T")[0],
+        contract_end: "",
+      })
+      setDurationMonths("12")
+      window.location.reload()
     }
-
     setLoading(false)
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
+        <Button className="bg-blue-600 hover:bg-blue-700 text-white gap-2 font-bold shadow-sm w-full">
           <UserPlus className="w-4 h-4" /> Nuevo Inquilino
         </Button>
       </DialogTrigger>
-
-      <DialogContent className="bg-white sm:max-w-[425px]">
+      <DialogContent className="bg-white sm:max-w-[480px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Añadir Nuevo Inquilino</DialogTitle>
+          <DialogTitle>Registrar Nuevo Inquilino</DialogTitle>
         </DialogHeader>
-
         <form onSubmit={handleSubmit} className="grid gap-4 py-4">
+
+          {/* NOMBRE */}
           <div className="grid gap-2">
-            <Label>Nombre Completo</Label>
+            <Label>Nombre completo *</Label>
             <Input
-              placeholder="Ej: Juan Pérez"
+              placeholder="Nombre y apellidos"
               value={formData.full_name}
               onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
               required
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          {/* TELÉFONO + EMAIL en la misma fila */}
+          <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-2">
               <Label>Teléfono</Label>
               <Input
-                placeholder="Ej: 600123456"
+                type="tel"
+                placeholder="6XX XXX XXX"
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
               />
             </div>
-
             <div className="grid gap-2">
-              <Label>Fianza Retenida (€)</Label>
+              {/* EMAIL */}
+              <Label>Email</Label>
               <Input
-                type="number"
-                step="0.01"
-                placeholder="0.00"
-                value={formData.deposit_amount}
-                onChange={(e) => setFormData({ ...formData, deposit_amount: e.target.value })}
+                type="email"
+                placeholder="correo@ejemplo.com"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               />
             </div>
           </div>
 
+          {/* INMUEBLE */}
           <div className="grid gap-2">
-            <Label>Asignar a Inmueble</Label>
+            <Label>Inmueble</Label>
             <Select value={formData.property_id} onValueChange={(val) => setFormData({ ...formData, property_id: val })}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecciona un inmueble..." />
-              </SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Selecciona un inmueble..." /></SelectTrigger>
               <SelectContent className="bg-white">
-                <SelectItem value="none">Sin asignar de momento</SelectItem>
-                {propertiesList.map((p: any) => (
-                  <SelectItem key={p.id} value={p.id.toString()}>
-                    {p.name}
-                  </SelectItem>
+                {properties.map((p) => (
+                  <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="grid gap-2">
-              <Label>Inicio Contrato</Label>
-              <Input
-                type="date"
-                value={formData.contract_start}
-                onChange={(e) => setFormData({ ...formData, contract_start: e.target.value })}
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label>Fin Contrato</Label>
-              <Input
-                type="date"
-                value={formData.contract_end}
-                onChange={(e) => setFormData({ ...formData, contract_end: e.target.value })}
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-2 pt-4 border-t mt-2">
-            <Label className="flex items-center gap-2 text-blue-600 font-bold">
-              <UploadCloud className="w-4 h-4" /> Adjuntar Contrato / DNI
-            </Label>
+          {/* FECHA INICIO */}
+          <div className="grid gap-2">
+            <Label>Inicio de contrato</Label>
             <Input
-              type="file"
-              accept="image/*,.pdf"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              className="text-xs file:bg-blue-50 file:text-blue-700 file:border-0 file:rounded-md file:px-3 file:py-1.5 cursor-pointer hover:file:bg-blue-100 transition-colors"
+              type="date"
+              value={formData.contract_start}
+              onChange={(e) => setFormData({ ...formData, contract_start: e.target.value })}
             />
-            <p className="text-[10px] text-slate-500">Puedes subir un PDF con todo el contrato o una foto del DNI.</p>
           </div>
 
-          <Button type="submit" disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white mt-4 w-full">
-            {loading ? "Guardando..." : "Crear Inquilino"}
+          {/* DURACIÓN DEL CONTRATO (desplegable) ← NUEVO */}
+          <div className="grid gap-2 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+            <Label className="text-blue-800 font-bold">Duración del contrato</Label>
+            <Select value={durationMonths} onValueChange={setDurationMonths}>
+              <SelectTrigger className="bg-white">
+                <SelectValue placeholder="Selecciona duración..." />
+              </SelectTrigger>
+              <SelectContent className="bg-white">
+                {CONTRACT_DURATIONS.map((d) => (
+                  <SelectItem key={d.value} value={d.value.toString()}>{d.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Si elige "Personalizado", muestra input de meses */}
+            {durationMonths === "0" && (
+              <div className="grid gap-1 mt-1">
+                <Label className="text-xs text-blue-700">Número de meses</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  placeholder="Ej: 18"
+                  value={customDuration}
+                  onChange={(e) => setCustomDuration(e.target.value)}
+                  className="bg-white"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* FECHA FIN (calculada automáticamente, pero editable) */}
+          <div className="grid gap-2">
+            <Label>Fin de contrato <span className="text-slate-400 font-normal text-xs">(calculado automáticamente)</span></Label>
+            <Input
+              type="date"
+              value={formData.contract_end}
+              onChange={(e) => setFormData({ ...formData, contract_end: e.target.value })}
+            />
+          </div>
+
+          <Button type="submit" disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white mt-2 w-full">
+            {loading ? "Guardando..." : "Registrar Inquilino"}
           </Button>
         </form>
       </DialogContent>

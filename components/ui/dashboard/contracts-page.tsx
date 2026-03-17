@@ -7,6 +7,8 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { AddContractForm } from "@/components/ui/dashboard/add-contract-form"
+import { GenerateMonthlyInvoicesButton } from "@/components/ui/dashboard/generate-monthly-invoices-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -17,7 +19,7 @@ import { supabase } from "@/utils/supabase/client"
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type ContractStatus = "borrador" | "pendiente_firma" | "activo" | "vencido" | "rescindido" | "prorrogado"
-type DepositStatus  = "pendiente" | "parcial" | "devuelta" | "retenida"
+type DepositStatus = "pendiente" | "parcial" | "devuelta" | "retenida"
 
 type ContractRow = {
   id: string | number
@@ -62,11 +64,11 @@ function calcDurationMonths(start: string, end: string): number | null {
 function getContractStatusLabel(status: ContractStatus) {
   const map: Record<ContractStatus, string> = {
     pendiente_firma: "Pendiente firma",
-    activo:          "Activo",
-    borrador:        "Borrador",
-    vencido:         "Vencido",
-    rescindido:      "Rescindido",
-    prorrogado:      "Prorrogado",     // ← NUEVO
+    activo: "Activo",
+    borrador: "Borrador",
+    vencido: "Vencido",
+    rescindido: "Rescindido",
+    prorrogado: "Prorrogado",     // ← NUEVO
   }
   return map[status] ?? status
 }
@@ -74,9 +76,9 @@ function getContractStatusLabel(status: ContractStatus) {
 function getDepositStatusLabel(status: DepositStatus) {
   const map: Record<DepositStatus, string> = {
     pendiente: "Pendiente",
-    parcial:   "Devuelta parcial",
-    devuelta:  "Fianza devuelta",    // ← texto mejorado
-    retenida:  "Fianza retenida",    // ← texto mejorado
+    parcial: "Devuelta parcial",
+    devuelta: "Fianza devuelta",    // ← texto mejorado
+    retenida: "Fianza retenida",    // ← texto mejorado
   }
   return map[status] ?? status
 }
@@ -98,12 +100,12 @@ function getAutoContractStatus(row: ContractRow): ContractStatus {
 
 function getContractStatusClasses(status: ContractStatus) {
   const map: Record<ContractStatus, string> = {
-    activo:          "bg-emerald-100 text-emerald-700 border-emerald-200",
+    activo: "bg-emerald-100 text-emerald-700 border-emerald-200",
     pendiente_firma: "bg-amber-100   text-amber-700   border-amber-200",
-    borrador:        "bg-slate-100   text-slate-700   border-slate-200",
-    vencido:         "bg-orange-100  text-orange-700  border-orange-200",
-    rescindido:      "bg-red-100     text-red-700     border-red-200",
-    prorrogado:      "bg-purple-100  text-purple-700  border-purple-200",  // ← NUEVO
+    borrador: "bg-slate-100   text-slate-700   border-slate-200",
+    vencido: "bg-orange-100  text-orange-700  border-orange-200",
+    rescindido: "bg-red-100     text-red-700     border-red-200",
+    prorrogado: "bg-purple-100  text-purple-700  border-purple-200",  // ← NUEVO
   }
   return map[status] ?? "bg-slate-100 text-slate-700"
 }
@@ -112,8 +114,8 @@ function getDepositStatusClasses(status: DepositStatus) {
   const map: Record<DepositStatus, string> = {
     devuelta: "bg-emerald-100 text-emerald-700 border-emerald-200",
     pendiente: "bg-amber-100  text-amber-700   border-amber-200",
-    parcial:   "bg-blue-100   text-blue-700    border-blue-200",
-    retenida:  "bg-red-100    text-red-700     border-red-200",
+    parcial: "bg-blue-100   text-blue-700    border-blue-200",
+    retenida: "bg-red-100    text-red-700     border-red-200",
   }
   return map[status] ?? "bg-slate-100 text-slate-700"
 }
@@ -123,7 +125,7 @@ function normalizeDepositStatus(
   returnedAmount: number,
   currentStatus: DepositStatus
 ): DepositStatus {
-  const total    = Number(depositAmount || 0)
+  const total = Number(depositAmount || 0)
   const returned = Number(returnedAmount || 0)
   if (currentStatus === "retenida") return "retenida"
   if (returned <= 0) return "pendiente"
@@ -134,13 +136,13 @@ function normalizeDepositStatus(
 
 // Opciones duración
 const CONTRACT_DURATIONS = [
-  { label: "6 meses",           value: 6 },
-  { label: "11 meses",          value: 11 },
-  { label: "12 meses (1 año)",  value: 12 },
+  { label: "6 meses", value: 6 },
+  { label: "11 meses", value: 11 },
+  { label: "12 meses (1 año)", value: 12 },
   { label: "24 meses (2 años)", value: 24 },
   { label: "36 meses (3 años)", value: 36 },
   { label: "60 meses (5 años)", value: 60 },
-  { label: "Personalizado",     value: 0 },
+  { label: "Personalizado", value: 0 },
 ]
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -148,18 +150,18 @@ export function ContractsPage() {
   const [contracts, setContracts] = useState<ContractRow[]>([])
   const [search, setSearch] = useState("")
   const [contractStatusFilter, setContractStatusFilter] = useState<string>("all")
-  const [depositStatusFilter,  setDepositStatusFilter]  = useState<string>("all")
+  const [depositStatusFilter, setDepositStatusFilter] = useState<string>("all")
 
   const [selectedContract, setSelectedContract] = useState<ContractRow | null>(null)
-  const [editOpen,    setEditOpen]    = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
-  const [previewUrl,  setPreviewUrl]  = useState("")
-  const [saving,      setSaving]      = useState(false)
+  const [previewUrl, setPreviewUrl] = useState("")
+  const [saving, setSaving] = useState(false)
   const [deletingPdf, setDeletingPdf] = useState(false)
-  const [pdfFile,     setPdfFile]     = useState<File | null>(null)
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
 
   // Duración edición
-  const [editDuration,       setEditDuration]       = useState<string>("0")
+  const [editDuration, setEditDuration] = useState<string>("0")
   const [editCustomDuration, setEditCustomDuration] = useState<string>("")
 
   async function loadContracts() {
@@ -198,24 +200,24 @@ export function ContractsPage() {
         const q = search.trim().toLowerCase()
         const matchSearch = !q ||
           item.property.toLowerCase().includes(q) ||
-          item.tenant.toLowerCase().includes(q)   ||
-          item.email.toLowerCase().includes(q)    ||
-          item.phone.toLowerCase().includes(q)    ||
+          item.tenant.toLowerCase().includes(q) ||
+          item.email.toLowerCase().includes(q) ||
+          item.phone.toLowerCase().includes(q) ||
           item.contractName.toLowerCase().includes(q)
 
         const effectiveStatus = getAutoContractStatus(item)
-        const matchContract  = contractStatusFilter === "all" || effectiveStatus === contractStatusFilter
-        const matchDeposit   = depositStatusFilter  === "all" || item.depositStatus === depositStatusFilter
+        const matchContract = contractStatusFilter === "all" || effectiveStatus === contractStatusFilter
+        const matchDeposit = depositStatusFilter === "all" || item.depositStatus === depositStatusFilter
 
         return matchSearch && matchContract && matchDeposit
       })
       .sort((a, b) => a.property.localeCompare(b.property, "es", { sensitivity: "base" }))
   }, [contracts, search, contractStatusFilter, depositStatusFilter])
 
-  const activeCount           = contracts.filter((c) => getAutoContractStatus(c) === "activo").length
+  const activeCount = contracts.filter((c) => getAutoContractStatus(c) === "activo").length
   const pendingSignatureCount = contracts.filter((c) => c.contractStatus === "pendiente_firma").length
-  const depositPendingCount   = contracts.filter((c) => ["pendiente", "parcial"].includes(c.depositStatus)).length
-  const prorrogadoCount       = contracts.filter((c) => c.contractStatus === "prorrogado").length
+  const depositPendingCount = contracts.filter((c) => ["pendiente", "parcial"].includes(c.depositStatus)).length
+  const prorrogadoCount = contracts.filter((c) => c.contractStatus === "prorrogado").length
 
   function openEditModal(contract: ContractRow) {
     setSelectedContract({ ...contract })
@@ -236,7 +238,7 @@ export function ContractsPage() {
     const updated = { ...selectedContract, [field]: value }
     if (field === "depositAmount" || field === "depositReturnedAmount") {
       updated.depositStatus = normalizeDepositStatus(
-        Number(updated.depositAmount  || 0),
+        Number(updated.depositAmount || 0),
         Number(updated.depositReturnedAmount || 0),
         updated.depositStatus
       )
@@ -293,21 +295,21 @@ export function ContractsPage() {
       if (selectedContract.tenant_id) {
         const { error } = await supabase.from("tenants").update({
           full_name: selectedContract.tenant,
-          email:     selectedContract.email || null,
-          phone:     selectedContract.phone || null,
+          email: selectedContract.email || null,
+          phone: selectedContract.phone || null,
         }).eq("id", selectedContract.tenant_id)
         if (error) throw error
       }
 
       const { error } = await supabase.from("contracts").update({
-        contract_code:            selectedContract.contractName || null,
-        deposit_status:           finalDepositStatus,
-        deposit_amount:           Number(selectedContract.depositAmount || 0),
-        deposit_returned_amount:  Number(selectedContract.depositReturnedAmount || 0),
-        start_date:               selectedContract.contractStart || null,
-        end_date:                 selectedContract.contractEnd   || null,
-        contract_status:          selectedContract.contractStatus,
-        document_path:            finalDocumentUrl,
+        contract_code: selectedContract.contractName || null,
+        deposit_status: finalDepositStatus,
+        deposit_amount: Number(selectedContract.depositAmount || 0),
+        deposit_returned_amount: Number(selectedContract.depositReturnedAmount || 0),
+        start_date: selectedContract.contractStart || null,
+        end_date: selectedContract.contractEnd || null,
+        contract_status: selectedContract.contractStatus,
+        document_path: finalDocumentUrl,
       }).eq("id", selectedContract.id)
       if (error) throw error
 
@@ -324,23 +326,38 @@ export function ContractsPage() {
   return (
     <div className="p-4 sm:p-8 bg-slate-50 min-h-screen w-full">
 
-      {/* Cabecera */}
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-900">Contratos</h1>
-          <p className="text-slate-500 font-medium mt-2">Control de contratos, fianzas y documentos PDF.</p>
+            {/* Cabecera */}
+      <div className="mb-8 space-y-4">
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+          <div>
+            <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-900">
+              Contratos
+            </h1>
+            <p className="text-slate-500 font-medium mt-2">
+              Control de contratos, fianzas, recibos y documentos PDF.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <AddContractForm onCreated={loadContracts} triggerClassName="shadow-sm" />
+            <GenerateMonthlyInvoicesButton onDone={loadContracts} />
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {[
-            { label: "Activos",      value: activeCount,           icon: <FileSignature className="w-4 h-4" />, color: "text-slate-900" },
-            { label: "Pend. firma",  value: pendingSignatureCount, icon: null, color: "text-amber-600"  },
-            { label: "Prorrogados",  value: prorrogadoCount,       icon: <Clock className="w-4 h-4" />, color: "text-purple-700" },
-            { label: "Fianzas pend.",value: depositPendingCount,   icon: <ShieldCheck className="w-4 h-4" />, color: "text-red-600" },
+            { label: "Activos", value: activeCount, icon: <FileSignature className="w-4 h-4" />, color: "text-slate-900" },
+            { label: "Pend. firma", value: pendingSignatureCount, icon: null, color: "text-amber-600" },
+            { label: "Prorrogados", value: prorrogadoCount, icon: <Clock className="w-4 h-4" />, color: "text-purple-700" },
+            { label: "Fianzas pend.", value: depositPendingCount, icon: <ShieldCheck className="w-4 h-4" />, color: "text-red-600" },
           ].map((stat) => (
-            <div key={stat.label} className="bg-white border rounded-xl px-4 py-3 shadow-sm min-w-[130px]">
+            <div
+              key={stat.label}
+              className="bg-white border rounded-xl px-4 py-3 shadow-sm min-w-[130px]"
+            >
               <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">
-                {stat.icon}{stat.label}
+                {stat.icon}
+                {stat.label}
               </div>
               <p className={`text-2xl font-black ${stat.color}`}>{stat.value}</p>
             </div>

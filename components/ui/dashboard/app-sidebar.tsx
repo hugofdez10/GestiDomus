@@ -15,13 +15,13 @@ import {
 } from "@/components/ui/sidebar"
 
 const items = [
-  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Contratos", url: "/dashboard/contracts", icon: FileSignature },
-  { title: "Inmuebles", url: "#", icon: Building2 },
-  { title: "Inquilinos", url: "#", icon: Users },
-  { title: "Facturación", url: "#", icon: Receipt },
-  { title: "Incidencias", url: "#", icon: Wrench },
-  { title: "Configuración", url: "#", icon: Settings },
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, enabled: true },
+  { title: "Contratos", url: "/dashboard/contracts", icon: FileSignature, enabled: true },
+  { title: "Inquilinos", url: "/dashboard/tenants", icon: Users, enabled: true },
+  { title: "Inmuebles", url: "#", icon: Building2, enabled: false },
+  { title: "Facturación", url: "#", icon: Receipt, enabled: false },
+  { title: "Incidencias", url: "#", icon: Wrench, enabled: false },
+  { title: "Configuración", url: "#", icon: Settings, enabled: false },
 ]
 
 export function AppSidebar() {
@@ -38,22 +38,34 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {items.map((item) => {
-                const isActive = pathname === item.url
+                const isActive =
+                  item.enabled &&
+                  (pathname === item.url || pathname.startsWith(`${item.url}/`))
 
                 return (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild>
-                      <Link
-                        href={item.url}
-                        className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${
-                          isActive
-                            ? "bg-blue-50 text-blue-700 font-semibold"
-                            : "hover:bg-slate-100 text-slate-700"
-                        }`}
-                      >
-                        <item.icon className="w-5 h-5" />
-                        <span>{item.title}</span>
-                      </Link>
+                      {item.enabled ? (
+                        <Link
+                          href={item.url}
+                          className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${
+                            isActive
+                              ? "bg-blue-50 text-blue-700 font-semibold"
+                              : "hover:bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          <item.icon className="w-5 h-5" />
+                          <span>{item.title}</span>
+                        </Link>
+                      ) : (
+                        <div className="flex items-center gap-3 p-2 rounded-lg text-slate-400 cursor-not-allowed opacity-70">
+                          <item.icon className="w-5 h-5" />
+                          <span>{item.title}</span>
+                          <span className="ml-auto text-[10px] font-bold uppercase tracking-wider">
+                            Próximamente
+                          </span>
+                        </div>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 )

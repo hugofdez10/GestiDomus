@@ -1,13 +1,74 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { supabase } from "@/lib/supabase"
+import { supabase } from "@/utils/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { FileSignature, UploadCloud } from "lucide-react"
+
+type ContractStatus =
+  | "borrador"
+  | "pendiente_firma"
+  | "activo"
+  | "vencido"
+  | "rescindido"
+  | "prorrogado"
+
+type DepositStatus =
+  | "pendiente"
+  | "parcial"
+  | "devuelta"
+  | "retenida"
+
+type PropertyOption = {
+  id: number
+  name: string
+  price?: number | null
+}
+
+type TenantOption = {
+  id: number
+  full_name: string
+}
+
+type FormDataState = {
+  property_id: string
+  tenant_id: string
+  start_date: string
+  end_date: string
+  monthly_rent: string
+  deposit_amount: string
+  contract_status: ContractStatus
+  deposit_status: DepositStatus
+  notes: string
+}
+
+const INITIAL_FORM: FormDataState = {
+  property_id: "",
+  tenant_id: "",
+  start_date: "",
+  end_date: "",
+  monthly_rent: "",
+  deposit_amount: "",
+  contract_status: "activo",
+  deposit_status: "pendiente",
+  notes: "",
+}
 
 function buildContractCode() {
   const year = new Date().getFullYear()
@@ -25,20 +86,9 @@ export function AddContractForm({
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [file, setFile] = useState<File | null>(null)
-  const [properties, setProperties] = useState<any[]>([])
-  const [tenants, setTenants] = useState<any[]>([])
-
-  const [formData, setFormData] = useState({
-    property_id: "",
-    tenant_id: "",
-    start_date: "",
-    end_date: "",
-    monthly_rent: "",
-    deposit_amount: "",
-    contract_status: "active",
-    deposit_status: "pending",
-    notes: "",
-  })
+  const [properties, setProperties] = useState<PropertyOption[]>([])
+  const [tenants, setTenants] = useState<TenantOption[]>([])
+  const [formData, setFormData] = useState<FormDataState>(INITIAL_FORM)
 
   useEffect(() => {
     if (!open) return
@@ -46,11 +96,21 @@ export function AddContractForm({
     async function fetchOptions() {
       const [propertiesRes, tenantsRes] = await Promise.all([
         supabase.from("properties").select("id, name, price").order("name"),
-        supabase.from("tenants").select("id, full_name, property_id").order("full_name"),
+        supabase.from("tenants").select("id, full_name").order("full_name"),
       ])
 
-      if (propertiesRes.data) setProperties(propertiesRes.data)
-      if (tenantsRes.data) setTenants(tenantsRes.data)
+      if (propertiesRes.error) {
+        alert("Error cargando inmuebles: " + propertiesRes.error.message)
+        return
+      }
+
+      if (tenantsRes.error) {
+        alert("Error cargando inquilinos: " + tenantsRes.error.message)
+        return
+      }
+
+      setProperties((propertiesRes.data ?? []) as PropertyOption[])
+      setTenants((tenantsRes.data ?? []) as TenantOption[])
     }
 
     fetchOptions()
@@ -61,16 +121,44 @@ export function AddContractForm({
     [properties, formData.property_id]
   )
 
-  const filteredTenants = useMemo(() => {
-    if (!formData.property_id) return tenants
-    return tenants.filter((tenant) => !tenant.property_id || tenant.property_id.toString() === formData.property_id)
-  }, [tenants, formData.property_id])
+  const filteredTenants = useMemo(() => tenants, [tenants])
 
   useEffect(() => {
     if (selectedProperty && !formData.monthly_rent) {
-      setFormData((prev) => ({ ...prev, monthly_rent: String(selectedProperty.price || "") }))
+      setFormData((prev) => ({
+        ...prev,
+        monthly_rent: String(selectedProperty.price ?? ""),
+      }))
     }
   }, [selectedProperty, formData.monthly_rent])
+
+  function resetForm() {
+    setFormData(INITIAL_FORM)
+    setFile(null)
+  }
+
+  async function uploadContractPdf(fileToUpload: File) {
+    const extension = fileToUpload.name.split(".").pop()?.toLowerCase()
+
+    if (extension !== "pdf") {
+      throw new Error("Solo se permite adjuntar archivos PDF.")
+    }
+
+    const fileName = `contrato-${Date.now()}.pdf`
+    const filePath = `contratos/${fileName}`
+
+    const { error: uploadError } = await supabase.storage
+      .from("vault")
+      .upload(filePath, fileToUpload, {
+        upsert: false,
+        contentType: "application/pdf",
+      })
+
+    if (uploadError) throw uploadError
+
+    const { data } = supabase.storage.from("vault").getPublicUrl(filePath)
+    return data.publicUrl
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -80,62 +168,56 @@ export function AddContractForm({
       return
     }
 
+    if (!formData.start_date || !formData.end_date) {
+      alert("Debes indicar fecha de inicio y fecha de fin.")
+      return
+    }
+
+    if (new Date(formData.end_date) < new Date(formData.start_date)) {
+      alert("La fecha de fin no puede ser anterior a la fecha de inicio.")
+      return
+    }
+
     setLoading(true)
-    let documentPath: string | null = null
 
     try {
+      let documentPath: string | null = null
+
       if (file) {
-        const fileExt = file.name.split(".").pop()
-        const fileName = `contrato-${Date.now()}.${fileExt}`
-        const filePath = `contratos/${fileName}`
-
-        const { error: uploadError } = await supabase.storage.from("vault").upload(filePath, file)
-        if (uploadError) throw uploadError
-
-        const { data } = supabase.storage.from("vault").getPublicUrl(filePath)
-        documentPath = data.publicUrl
+        documentPath = await uploadContractPdf(file)
       }
 
-      const propertyId = parseInt(formData.property_id)
-      const tenantId = parseInt(formData.tenant_id)
+      const propertyId = Number(formData.property_id)
+      const tenantId = Number(formData.tenant_id)
 
-      const { error } = await supabase.from("contracts").insert([
+      const { error: insertError } = await supabase.from("contracts").insert([
         {
           property_id: propertyId,
           tenant_id: tenantId,
           contract_code: buildContractCode(),
           start_date: formData.start_date,
           end_date: formData.end_date,
-          monthly_rent: parseFloat(formData.monthly_rent || "0"),
-          deposit_amount: parseFloat(formData.deposit_amount || "0"),
+          monthly_rent: Number(formData.monthly_rent || 0),
+          deposit_amount: Number(formData.deposit_amount || 0),
+          deposit_returned_amount: 0,
           contract_status: formData.contract_status,
           deposit_status: formData.deposit_status,
           document_path: documentPath,
           notes: formData.notes || null,
-          deposit_returned_amount: 0,
         },
       ])
 
-      if (error) throw error
+      if (insertError) throw insertError
 
-      await Promise.all([
-        supabase.from("tenants").update({ property_id: propertyId }).eq("id", tenantId),
-        supabase.from("properties").update({ status: "Alquilado" }).eq("id", propertyId),
-      ])
+      const { error: propertyError } = await supabase
+        .from("properties")
+        .update({ status: "occupied" })
+        .eq("id", propertyId)
+
+      if (propertyError) throw propertyError
 
       setOpen(false)
-      setFile(null)
-      setFormData({
-        property_id: "",
-        tenant_id: "",
-        start_date: "",
-        end_date: "",
-        monthly_rent: "",
-        deposit_amount: "",
-        contract_status: "active",
-        deposit_status: "pending",
-        notes: "",
-      })
+      resetForm()
       onCreated()
     } catch (error: any) {
       alert("❌ Error al crear el contrato: " + (error?.message || "Sin detalle"))
@@ -145,10 +227,17 @@ export function AddContractForm({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (!nextOpen) resetForm()
+      }}
+    >
       <DialogTrigger asChild>
         <Button className={`bg-indigo-600 hover:bg-indigo-700 text-white gap-2 ${triggerClassName}`}>
-          <FileSignature className="w-4 h-4" /> Nuevo Contrato
+          <FileSignature className="w-4 h-4" />
+          Nuevo Contrato
         </Button>
       </DialogTrigger>
 
@@ -161,7 +250,16 @@ export function AddContractForm({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label>Inmueble</Label>
-              <Select value={formData.property_id} onValueChange={(value) => setFormData({ ...formData, property_id: value, tenant_id: "", monthly_rent: "" })}>
+              <Select
+                value={formData.property_id}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    property_id: value,
+                    monthly_rent: "",
+                  }))
+                }
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Selecciona un inmueble" />
                 </SelectTrigger>
@@ -177,7 +275,15 @@ export function AddContractForm({
 
             <div className="grid gap-2">
               <Label>Inquilino</Label>
-              <Select value={formData.tenant_id} onValueChange={(value) => setFormData({ ...formData, tenant_id: value })}>
+              <Select
+                value={formData.tenant_id}
+                onValueChange={(value) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    tenant_id: value,
+                  }))
+                }
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Selecciona un inquilino" />
                 </SelectTrigger>
@@ -195,54 +301,115 @@ export function AddContractForm({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label>Inicio de contrato</Label>
-              <Input type="date" value={formData.start_date} onChange={(e) => setFormData({ ...formData, start_date: e.target.value })} required />
+              <Input
+                type="date"
+                value={formData.start_date}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    start_date: e.target.value,
+                  }))
+                }
+                required
+              />
             </div>
+
             <div className="grid gap-2">
               <Label>Fin de contrato</Label>
-              <Input type="date" value={formData.end_date} onChange={(e) => setFormData({ ...formData, end_date: e.target.value })} required />
+              <Input
+                type="date"
+                value={formData.end_date}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    end_date: e.target.value,
+                  }))
+                }
+                required
+              />
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label>Renta mensual (€)</Label>
-              <Input type="number" step="0.01" value={formData.monthly_rent} onChange={(e) => setFormData({ ...formData, monthly_rent: e.target.value })} required />
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.monthly_rent}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    monthly_rent: e.target.value,
+                  }))
+                }
+                required
+              />
             </div>
+
             <div className="grid gap-2">
               <Label>Fianza (€)</Label>
-              <Input type="number" step="0.01" value={formData.deposit_amount} onChange={(e) => setFormData({ ...formData, deposit_amount: e.target.value })} />
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.deposit_amount}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    deposit_amount: e.target.value,
+                  }))
+                }
+              />
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label>Estado del contrato</Label>
-              <Select value={formData.contract_status} onValueChange={(value) => setFormData({ ...formData, contract_status: value })}>
+              <Select
+                value={formData.contract_status}
+                onValueChange={(value: ContractStatus) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    contract_status: value,
+                  }))
+                }
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-white">
-                  <SelectItem value="draft">Borrador</SelectItem>
-                  <SelectItem value="sent">Enviado</SelectItem>
-                  <SelectItem value="signed">Firmado</SelectItem>
-                  <SelectItem value="active">Activo</SelectItem>
-                  <SelectItem value="expired">Vencido</SelectItem>
-                  <SelectItem value="terminated">Rescindido</SelectItem>
+                  <SelectItem value="borrador">Borrador</SelectItem>
+                  <SelectItem value="pendiente_firma">Pendiente firma</SelectItem>
+                  <SelectItem value="activo">Activo</SelectItem>
+                  <SelectItem value="vencido">Vencido</SelectItem>
+                  <SelectItem value="rescindido">Rescindido</SelectItem>
+                  <SelectItem value="prorrogado">Prorrogado</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+
             <div className="grid gap-2">
               <Label>Estado de fianza</Label>
-              <Select value={formData.deposit_status} onValueChange={(value) => setFormData({ ...formData, deposit_status: value })}>
+              <Select
+                value={formData.deposit_status}
+                onValueChange={(value: DepositStatus) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    deposit_status: value,
+                  }))
+                }
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-white">
-                  <SelectItem value="pending">Pendiente</SelectItem>
-                  <SelectItem value="received">Recibida</SelectItem>
-                  <SelectItem value="returned">Devuelta</SelectItem>
-                  <SelectItem value="partially_returned">Devuelta parcial</SelectItem>
-                  <SelectItem value="withheld">Retenida</SelectItem>
+                  <SelectItem value="pendiente">Pendiente</SelectItem>
+                  <SelectItem value="parcial">Devuelta parcial</SelectItem>
+                  <SelectItem value="devuelta">Fianza devuelta</SelectItem>
+                  <SelectItem value="retenida">Fianza retenida</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -250,22 +417,36 @@ export function AddContractForm({
 
           <div className="grid gap-2">
             <Label>Notas</Label>
-            <Input value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} placeholder="Observaciones, cláusulas o contexto" />
+            <Input
+              value={formData.notes}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  notes: e.target.value,
+                }))
+              }
+              placeholder="Observaciones, cláusulas o contexto"
+            />
           </div>
 
           <div className="grid gap-2 pt-4 border-t mt-2">
             <Label className="flex items-center gap-2 text-indigo-600 font-bold">
-              <UploadCloud className="w-4 h-4" /> Adjuntar contrato firmado
+              <UploadCloud className="w-4 h-4" />
+              Adjuntar contrato firmado (PDF)
             </Label>
             <Input
               type="file"
-              accept="image/*,.pdf"
+              accept="application/pdf"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
               className="text-xs file:bg-indigo-50 file:text-indigo-700 file:border-0 file:rounded-md file:px-3 file:py-1.5 cursor-pointer hover:file:bg-indigo-100 transition-colors"
             />
           </div>
 
-          <Button type="submit" disabled={loading} className="bg-indigo-600 hover:bg-indigo-700 text-white mt-2 w-full">
+          <Button
+            type="submit"
+            disabled={loading}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white mt-2 w-full"
+          >
             {loading ? "Guardando contrato..." : "Crear Contrato"}
           </Button>
         </form>

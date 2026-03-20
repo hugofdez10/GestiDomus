@@ -15,13 +15,13 @@ import {
 } from "@/components/ui/sidebar"
 
 const items = [
-  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, enabled: true },
-  { title: "Contratos", url: "/dashboard/contracts", icon: FileSignature, enabled: true },
-  { title: "Inquilinos", url: "/dashboard/tenants", icon: Users, enabled: true },
-  { title: "Inmuebles", url: "#", icon: Building2, enabled: false },
-  { title: "Facturación", url: "#", icon: Receipt, enabled: false },
-  { title: "Incidencias", url: "#", icon: Wrench, enabled: false },
-  { title: "Configuración", url: "#", icon: Settings, enabled: false },
+  { title: "Dashboard",   url: "/dashboard",           icon: LayoutDashboard, enabled: true },
+  { title: "Contratos",   url: "/dashboard/contracts", icon: FileSignature,   enabled: true },
+  { title: "Inquilinos",  url: "/dashboard/tenants",   icon: Users,           enabled: true },
+  { title: "Recibos",     url: "/dashboard/recibos",   icon: Receipt,         enabled: true },
+  { title: "Inmuebles",   url: "#",                    icon: Building2,       enabled: false },
+  { title: "Incidencias", url: "#",                    icon: Wrench,          enabled: false },
+  { title: "Configuración", url: "#",                  icon: Settings,        enabled: false },
 ]
 
 export function AppSidebar() {

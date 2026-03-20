@@ -2,8 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react"
 import {
-  Search, FileText, Eye, Pencil, Save, UploadCloud,
-  FileSignature, ShieldCheck, Trash2, Clock,
+  Search,
+  FileText,
+  Eye,
+  Pencil,
+  Save,
+  UploadCloud,
+  FileSignature,
+  ShieldCheck,
+  Trash2,
+  Clock,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -14,12 +22,48 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-
 import { supabase } from "@/utils/supabase/client"
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
-type ContractStatus = "borrador" | "pendiente_firma" | "activo" | "vencido" | "rescindido" | "prorrogado"
-type DepositStatus = "pendiente" | "parcial" | "devuelta" | "retenida"
+type ContractStatus =
+  | "borrador"
+  | "pendiente_firma"
+  | "activo"
+  | "vencido"
+  | "rescindido"
+  | "prorrogado"
+
+type DepositStatus =
+  | "pendiente"
+  | "parcial"
+  | "devuelta"
+  | "retenida"
+
+type ContractDbStatus =
+  | "draft"
+  | "sent"
+  | "signed"
+  | "active"
+  | "expired"
+  | "terminated"
+  | "renewed"
+  | "borrador"
+  | "pendiente_firma"
+  | "activo"
+  | "vencido"
+  | "rescindido"
+  | "prorrogado"
+
+type DepositDbStatus =
+  | "pending"
+  | "received"
+  | "returned"
+  | "partially_returned"
+  | "withheld"
+  | "pendiente"
+  | "parcial"
+  | "devuelta"
+  | "retenida"
 
 type ContractRow = {
   id: string | number
@@ -38,24 +82,108 @@ type ContractRow = {
   contractUrl?: string
 }
 
+// ─── Mapeos estado DB <-> UI ──────────────────────────────────────────────────
+function normalizeContractStatusFromDb(value?: ContractDbStatus): ContractStatus {
+  switch (value) {
+    case "draft":
+    case "borrador":
+      return "borrador"
+    case "sent":
+    case "pendiente_firma":
+      return "pendiente_firma"
+    case "signed":
+    case "active":
+    case "activo":
+      return "activo"
+    case "expired":
+    case "vencido":
+      return "vencido"
+    case "terminated":
+    case "rescindido":
+      return "rescindido"
+    case "renewed":
+    case "prorrogado":
+      return "prorrogado"
+    default:
+      return "borrador"
+  }
+}
+
+function normalizeDepositStatusFromDb(value?: DepositDbStatus): DepositStatus {
+  switch (value) {
+    case "pending":
+    case "received":
+    case "pendiente":
+      return "pendiente"
+    case "partially_returned":
+    case "parcial":
+      return "parcial"
+    case "returned":
+    case "devuelta":
+      return "devuelta"
+    case "withheld":
+    case "retenida":
+      return "retenida"
+    default:
+      return "pendiente"
+  }
+}
+
+function mapContractStatusToDb(status: ContractStatus): ContractDbStatus {
+  switch (status) {
+    case "borrador":
+      return "borrador"
+    case "pendiente_firma":
+      return "pendiente_firma"
+    case "activo":
+      return "activo"
+    case "vencido":
+      return "vencido"
+    case "rescindido":
+      return "rescindido"
+    case "prorrogado":
+      return "prorrogado"
+    default:
+      return "borrador"
+  }
+}
+
+function mapDepositStatusToDb(status: DepositStatus): DepositDbStatus {
+  switch (status) {
+    case "pendiente":
+      return "pendiente"
+    case "parcial":
+      return "parcial"
+    case "devuelta":
+      return "devuelta"
+    case "retenida":
+      return "retenida"
+    default:
+      return "pendiente"
+  }
+}
+
 // ─── Utilidades de formato ────────────────────────────────────────────────────
 function formatDate(dateString: string) {
   if (!dateString) return "—"
   return new Date(dateString).toLocaleDateString("es-ES", {
-    day: "2-digit", month: "2-digit", year: "numeric",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
   })
 }
 
 function formatCurrency(value: number) {
   return `${Number(value || 0).toLocaleString("es-ES", {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   })} €`
 }
 
-// Calcula duración en meses entre dos fechas
 function calcDurationMonths(start: string, end: string): number | null {
   if (!start || !end) return null
-  const s = new Date(start), e = new Date(end)
+  const s = new Date(start)
+  const e = new Date(end)
   if (isNaN(s.getTime()) || isNaN(e.getTime())) return null
   return (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth())
 }
@@ -68,7 +196,7 @@ function getContractStatusLabel(status: ContractStatus) {
     borrador: "Borrador",
     vencido: "Vencido",
     rescindido: "Rescindido",
-    prorrogado: "Prorrogado",     // ← NUEVO
+    prorrogado: "Prorrogado",
   }
   return map[status] ?? status
 }
@@ -77,17 +205,17 @@ function getDepositStatusLabel(status: DepositStatus) {
   const map: Record<DepositStatus, string> = {
     pendiente: "Pendiente",
     parcial: "Devuelta parcial",
-    devuelta: "Fianza devuelta",    // ← texto mejorado
-    retenida: "Fianza retenida",    // ← texto mejorado
+    devuelta: "Fianza devuelta",
+    retenida: "Fianza retenida",
   }
   return map[status] ?? status
 }
 
-// Estado de contrato: calcula automáticamente si no es prorrogado/rescindido/borrador
 function getAutoContractStatus(row: ContractRow): ContractStatus {
   if (["prorrogado", "rescindido", "borrador", "pendiente_firma"].includes(row.contractStatus)) {
     return row.contractStatus
   }
+
   if (!row.contractEnd) return row.contractStatus
 
   const end = new Date(row.contractEnd)
@@ -101,11 +229,11 @@ function getAutoContractStatus(row: ContractRow): ContractStatus {
 function getContractStatusClasses(status: ContractStatus) {
   const map: Record<ContractStatus, string> = {
     activo: "bg-emerald-100 text-emerald-700 border-emerald-200",
-    pendiente_firma: "bg-amber-100   text-amber-700   border-amber-200",
-    borrador: "bg-slate-100   text-slate-700   border-slate-200",
-    vencido: "bg-orange-100  text-orange-700  border-orange-200",
-    rescindido: "bg-red-100     text-red-700     border-red-200",
-    prorrogado: "bg-purple-100  text-purple-700  border-purple-200",  // ← NUEVO
+    pendiente_firma: "bg-amber-100 text-amber-700 border-amber-200",
+    borrador: "bg-slate-100 text-slate-700 border-slate-200",
+    vencido: "bg-orange-100 text-orange-700 border-orange-200",
+    rescindido: "bg-red-100 text-red-700 border-red-200",
+    prorrogado: "bg-purple-100 text-purple-700 border-purple-200",
   }
   return map[status] ?? "bg-slate-100 text-slate-700"
 }
@@ -113,9 +241,9 @@ function getContractStatusClasses(status: ContractStatus) {
 function getDepositStatusClasses(status: DepositStatus) {
   const map: Record<DepositStatus, string> = {
     devuelta: "bg-emerald-100 text-emerald-700 border-emerald-200",
-    pendiente: "bg-amber-100  text-amber-700   border-amber-200",
-    parcial: "bg-blue-100   text-blue-700    border-blue-200",
-    retenida: "bg-red-100    text-red-700     border-red-200",
+    pendiente: "bg-amber-100 text-amber-700 border-amber-200",
+    parcial: "bg-blue-100 text-blue-700 border-blue-200",
+    retenida: "bg-red-100 text-red-700 border-red-200",
   }
   return map[status] ?? "bg-slate-100 text-slate-700"
 }
@@ -127,6 +255,7 @@ function normalizeDepositStatus(
 ): DepositStatus {
   const total = Number(depositAmount || 0)
   const returned = Number(returnedAmount || 0)
+
   if (currentStatus === "retenida") return "retenida"
   if (returned <= 0) return "pendiente"
   if (returned >= total && total > 0) return "devuelta"
@@ -145,6 +274,12 @@ const CONTRACT_DURATIONS = [
   { label: "Personalizado", value: 0 },
 ]
 
+// ─── Helpers relaciones Supabase ──────────────────────────────────────────────
+function getSingleRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null
+  return Array.isArray(value) ? value[0] ?? null : value
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 export function ContractsPage() {
   const [contracts, setContracts] = useState<ContractRow[]>([])
@@ -160,45 +295,70 @@ export function ContractsPage() {
   const [deletingPdf, setDeletingPdf] = useState(false)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
 
-  // Duración edición
   const [editDuration, setEditDuration] = useState<string>("0")
   const [editCustomDuration, setEditCustomDuration] = useState<string>("")
 
   async function loadContracts() {
     const { data, error } = await supabase
-      .from("contracts_overview")
-      .select("*")
-      .order("property_name", { ascending: true })
+      .from("contracts")
+      .select(`
+        id,
+        tenant_id,
+        property_id,
+        contract_code,
+        deposit_status,
+        deposit_amount,
+        deposit_returned_amount,
+        start_date,
+        end_date,
+        contract_status,
+        document_path,
+        properties(name),
+        tenants(full_name, email, phone)
+      `)
+      .order("start_date", { ascending: false })
 
-    if (error) { alert("Error cargando contratos: " + error.message); return }
+    if (error) {
+      alert("Error cargando contratos: " + error.message)
+      return
+    }
 
-    const mapped: ContractRow[] = (data ?? []).map((c: any) => ({
-      id: c.id,
-      tenant_id: c.tenant_id ?? null,
-      property: c.property_name ?? "—",
-      tenant: c.tenant_name ?? "—",
-      email: c.tenant_email ?? "",
-      phone: c.tenant_phone ?? "",
-      contractName: c.contract_code ?? "",
-      depositStatus: c.deposit_status ?? "pendiente",
-      depositAmount: Number(c.deposit_amount ?? 0),
-      depositReturnedAmount: Number(c.deposit_returned_amount ?? 0),
-      contractStart: c.start_date ?? "",
-      contractEnd: c.end_date ?? "",
-      contractStatus: c.contract_status ?? "borrador",
-      contractUrl: c.document_path ?? "",
-    }))
+    const mapped: ContractRow[] = (data ?? []).map((c: any) => {
+      const propertyRel = getSingleRelation(c.properties)
+      const tenantRel = getSingleRelation(c.tenants)
+
+      return {
+        id: c.id,
+        tenant_id: c.tenant_id ?? null,
+        property: propertyRel?.name ?? "—",
+        tenant: tenantRel?.full_name ?? "—",
+        email: tenantRel?.email ?? "",
+        phone: tenantRel?.phone ?? "",
+        contractName: c.contract_code ?? "",
+        depositStatus: normalizeDepositStatusFromDb(c.deposit_status),
+        depositAmount: Number(c.deposit_amount ?? 0),
+        depositReturnedAmount: Number(c.deposit_returned_amount ?? 0),
+        contractStart: c.start_date ?? "",
+        contractEnd: c.end_date ?? "",
+        contractStatus: normalizeContractStatusFromDb(c.contract_status),
+        contractUrl: c.document_path ?? "",
+      }
+    })
 
     setContracts(mapped)
   }
 
-  useEffect(() => { loadContracts() }, [])
+  useEffect(() => {
+    loadContracts()
+  }, [])
 
   const filteredContracts = useMemo(() => {
     return contracts
       .filter((item) => {
         const q = search.trim().toLowerCase()
-        const matchSearch = !q ||
+
+        const matchSearch =
+          !q ||
           item.property.toLowerCase().includes(q) ||
           item.tenant.toLowerCase().includes(q) ||
           item.email.toLowerCase().includes(q) ||
@@ -228,14 +388,20 @@ export function ContractsPage() {
   }
 
   function openPreview(url?: string) {
-    if (!url) { alert("Este contrato no tiene documento adjunto."); return }
+    if (!url) {
+      alert("Este contrato no tiene documento adjunto.")
+      return
+    }
+
     setPreviewUrl(url)
     setPreviewOpen(true)
   }
 
   function updateSelectedField<K extends keyof ContractRow>(field: K, value: ContractRow[K]) {
     if (!selectedContract) return
+
     const updated = { ...selectedContract, [field]: value }
+
     if (field === "depositAmount" || field === "depositReturnedAmount") {
       updated.depositStatus = normalizeDepositStatus(
         Number(updated.depositAmount || 0),
@@ -243,10 +409,10 @@ export function ContractsPage() {
         updated.depositStatus
       )
     }
+
     setSelectedContract(updated)
   }
 
-  // Aplica duración recalculando fecha fin
   function applyEditDuration(months: number) {
     if (!selectedContract?.contractStart || !months) return
     const start = new Date(selectedContract.contractStart)
@@ -255,36 +421,64 @@ export function ContractsPage() {
   }
 
   async function uploadPdf(contractId: string | number, file: File) {
-    if (file.name.split(".").pop()?.toLowerCase() !== "pdf") throw new Error("Solo se permiten PDF.")
+    const extension = file.name.split(".").pop()?.toLowerCase()
+    if (extension !== "pdf") {
+      throw new Error("Solo se permiten PDF.")
+    }
+
     const filePath = `contracts/contract-${contractId}-${Date.now()}.pdf`
-    const { error } = await supabase.storage.from("vault").upload(filePath, file, { upsert: true, contentType: "application/pdf" })
+
+    const { error } = await supabase.storage
+      .from("vault")
+      .upload(filePath, file, {
+        upsert: true,
+        contentType: "application/pdf",
+      })
+
     if (error) throw error
+
     return supabase.storage.from("vault").getPublicUrl(filePath).data.publicUrl
   }
 
   async function handleDeletePdf() {
     if (!selectedContract?.contractUrl) return
+
     setDeletingPdf(true)
+
     try {
-      const { error } = await supabase.from("contracts").update({ document_path: null }).eq("id", selectedContract.id)
+      const { error } = await supabase
+        .from("contracts")
+        .update({ document_path: null })
+        .eq("id", selectedContract.id)
+
       if (error) throw error
+
       setSelectedContract({ ...selectedContract, contractUrl: "" })
       await loadContracts()
     } catch (e: any) {
       alert("Error al borrar el PDF: " + e.message)
-    } finally { setDeletingPdf(false) }
+    } finally {
+      setDeletingPdf(false)
+    }
   }
 
   async function handleSave() {
     if (!selectedContract) return
+
     setSaving(true)
+
     try {
       if (selectedContract.depositReturnedAmount > selectedContract.depositAmount) {
-        alert("El importe devuelto no puede superar la fianza total."); setSaving(false); return
+        alert("El importe devuelto no puede superar la fianza total.")
+        setSaving(false)
+        return
       }
 
       let finalDocumentUrl = selectedContract.contractUrl || null
-      if (pdfFile) finalDocumentUrl = await uploadPdf(selectedContract.id, pdfFile)
+
+      if (pdfFile) {
+        finalDocumentUrl = await uploadPdf(selectedContract.id, pdfFile)
+      }
 
       const finalDepositStatus = normalizeDepositStatus(
         Number(selectedContract.depositAmount || 0),
@@ -293,24 +487,32 @@ export function ContractsPage() {
       )
 
       if (selectedContract.tenant_id) {
-        const { error } = await supabase.from("tenants").update({
-          full_name: selectedContract.tenant,
-          email: selectedContract.email || null,
-          phone: selectedContract.phone || null,
-        }).eq("id", selectedContract.tenant_id)
+        const { error } = await supabase
+          .from("tenants")
+          .update({
+            full_name: selectedContract.tenant,
+            email: selectedContract.email || null,
+            phone: selectedContract.phone || null,
+          })
+          .eq("id", selectedContract.tenant_id)
+
         if (error) throw error
       }
 
-      const { error } = await supabase.from("contracts").update({
-        contract_code: selectedContract.contractName || null,
-        deposit_status: finalDepositStatus,
-        deposit_amount: Number(selectedContract.depositAmount || 0),
-        deposit_returned_amount: Number(selectedContract.depositReturnedAmount || 0),
-        start_date: selectedContract.contractStart || null,
-        end_date: selectedContract.contractEnd || null,
-        contract_status: selectedContract.contractStatus,
-        document_path: finalDocumentUrl,
-      }).eq("id", selectedContract.id)
+      const { error } = await supabase
+        .from("contracts")
+        .update({
+          contract_code: selectedContract.contractName || null,
+          deposit_status: mapDepositStatusToDb(finalDepositStatus),
+          deposit_amount: Number(selectedContract.depositAmount || 0),
+          deposit_returned_amount: Number(selectedContract.depositReturnedAmount || 0),
+          start_date: selectedContract.contractStart || null,
+          end_date: selectedContract.contractEnd || null,
+          contract_status: mapContractStatusToDb(selectedContract.contractStatus),
+          document_path: finalDocumentUrl,
+        })
+        .eq("id", selectedContract.id)
+
       if (error) throw error
 
       setEditOpen(false)
@@ -319,14 +521,13 @@ export function ContractsPage() {
       await loadContracts()
     } catch (e: any) {
       alert("Error al guardar: " + e.message)
-    } finally { setSaving(false) }
+    } finally {
+      setSaving(false)
+    }
   }
 
-  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="p-4 sm:p-8 bg-slate-50 min-h-screen w-full">
-
-            {/* Cabecera */}
       <div className="mb-8 space-y-4">
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
           <div>
@@ -365,25 +566,38 @@ export function ContractsPage() {
         </div>
       </div>
 
-      {/* Tabla */}
       <div className="bg-white border rounded-xl shadow-sm overflow-hidden">
-        {/* Filtros */}
         <div className="p-5 sm:p-6 border-b">
           <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between mb-4">
             <h2 className="text-lg font-bold text-slate-800">Listado de contratos</h2>
-            <Button variant="outline" onClick={() => { setSearch(""); setContractStatusFilter("all"); setDepositStatusFilter("all") }}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearch("")
+                setContractStatusFilter("all")
+                setDepositStatusFilter("all")
+              }}
+            >
               Limpiar filtros
             </Button>
           </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
             <div className="lg:col-span-6 relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar por inmueble, inquilino, email..." className="pl-10 bg-slate-50" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por inmueble, inquilino, email..."
+                className="pl-10 bg-slate-50"
+              />
             </div>
+
             <div className="lg:col-span-3">
               <Select value={contractStatusFilter} onValueChange={setContractStatusFilter}>
-                <SelectTrigger className="bg-slate-50"><SelectValue placeholder="Estado contrato" /></SelectTrigger>
+                <SelectTrigger className="bg-slate-50">
+                  <SelectValue placeholder="Estado contrato" />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos los contratos</SelectItem>
                   <SelectItem value="borrador">Borrador</SelectItem>
@@ -395,9 +609,12 @@ export function ContractsPage() {
                 </SelectContent>
               </Select>
             </div>
+
             <div className="lg:col-span-3">
               <Select value={depositStatusFilter} onValueChange={setDepositStatusFilter}>
-                <SelectTrigger className="bg-slate-50"><SelectValue placeholder="Estado fianza" /></SelectTrigger>
+                <SelectTrigger className="bg-slate-50">
+                  <SelectValue placeholder="Estado fianza" />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas las fianzas</SelectItem>
                   <SelectItem value="pendiente">Pendiente</SelectItem>
@@ -410,7 +627,6 @@ export function ContractsPage() {
           </div>
         </div>
 
-        {/* Desktop */}
         <div className="hidden lg:block">
           <Table>
             <TableHeader>
@@ -436,31 +652,38 @@ export function ContractsPage() {
                 filteredContracts.map((contract) => {
                   const effectiveStatus = getAutoContractStatus(contract)
                   const duration = calcDurationMonths(contract.contractStart, contract.contractEnd)
+
                   return (
                     <TableRow key={contract.id} className="hover:bg-slate-50/60">
-                      <TableCell><p className="font-semibold text-slate-800">{contract.property}</p></TableCell>
+                      <TableCell>
+                        <p className="font-semibold text-slate-800">{contract.property}</p>
+                      </TableCell>
 
-                      {/* Inquilino: nombre + teléfono + EMAIL */}
                       <TableCell>
                         <p className="font-semibold text-slate-700">{contract.tenant}</p>
                         <p className="text-xs text-slate-400">{contract.phone || "—"}</p>
-                        {contract.email
-                          ? <a href={`mailto:${contract.email}`} className="text-xs text-blue-500 hover:underline">{contract.email}</a>
-                          : <p className="text-xs text-slate-300 italic">Sin email</p>
-                        }
+                        {contract.email ? (
+                          <a href={`mailto:${contract.email}`} className="text-xs text-blue-500 hover:underline">
+                            {contract.email}
+                          </a>
+                        ) : (
+                          <p className="text-xs text-slate-300 italic">Sin email</p>
+                        )}
                       </TableCell>
 
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <FileText className="w-4 h-4 text-blue-600" />
-                          <span className="font-medium text-slate-700">{contract.contractName || "Sin código"}</span>
+                          <span className="font-medium text-slate-700">
+                            {contract.contractName || "Sin código"}
+                          </span>
                         </div>
                       </TableCell>
 
-                      {/* Fecha INICIO — dd/mm/aaaa */}
-                      <TableCell className="text-sm text-slate-600">{formatDate(contract.contractStart)}</TableCell>
+                      <TableCell className="text-sm text-slate-600">
+                        {formatDate(contract.contractStart)}
+                      </TableCell>
 
-                      {/* Fecha FIN + duración en meses */}
                       <TableCell>
                         <p className="text-sm text-slate-600">{formatDate(contract.contractEnd)}</p>
                         {duration !== null && (
@@ -488,7 +711,12 @@ export function ContractsPage() {
                           <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
                             <Pencil className="w-4 h-4" /> Editar
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => openPreview(contract.contractUrl)} disabled={!contract.contractUrl}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openPreview(contract.contractUrl)}
+                            disabled={!contract.contractUrl}
+                          >
                             <Eye className="w-4 h-4" /> PDF
                           </Button>
                         </div>
@@ -501,46 +729,56 @@ export function ContractsPage() {
           </Table>
         </div>
 
-        {/* Mobile */}
         <div className="lg:hidden p-4 space-y-4">
-          {filteredContracts.map((contract) => {
-            const effectiveStatus = getAutoContractStatus(contract)
-            const duration = calcDurationMonths(contract.contractStart, contract.contractEnd)
-            return (
-              <div key={contract.id} className="rounded-xl border bg-white p-4 shadow-sm space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-bold text-slate-900">{contract.property}</p>
-                    <p className="text-sm text-slate-600">{contract.tenant}</p>
-                    {contract.email && <p className="text-xs text-blue-500">{contract.email}</p>}
+          {filteredContracts.length === 0 ? (
+            <div className="rounded-xl border bg-white p-6 text-center text-slate-500 shadow-sm">
+              No hay contratos con los filtros actuales.
+            </div>
+          ) : (
+            filteredContracts.map((contract) => {
+              const effectiveStatus = getAutoContractStatus(contract)
+              const duration = calcDurationMonths(contract.contractStart, contract.contractEnd)
+
+              return (
+                <div key={contract.id} className="rounded-xl border bg-white p-4 shadow-sm space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-bold text-slate-900">{contract.property}</p>
+                      <p className="text-sm text-slate-600">{contract.tenant}</p>
+                      {contract.email && <p className="text-xs text-blue-500">{contract.email}</p>}
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
+                      <Pencil className="w-4 h-4" /> Editar
+                    </Button>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
-                    <Pencil className="w-4 h-4" /> Editar
-                  </Button>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline" className={getContractStatusClasses(effectiveStatus)}>
+                      {getContractStatusLabel(effectiveStatus)}
+                    </Badge>
+                    <Badge variant="outline" className={getDepositStatusClasses(contract.depositStatus)}>
+                      {getDepositStatusLabel(contract.depositStatus)}
+                    </Badge>
+                  </div>
+
+                  <div className="text-sm text-slate-600 space-y-1">
+                    <p><strong>Inicio:</strong> {formatDate(contract.contractStart)}</p>
+                    <p><strong>Fin:</strong> {formatDate(contract.contractEnd)}{duration !== null ? ` (${duration} meses)` : ""}</p>
+                    <p><strong>Fianza:</strong> {formatCurrency(contract.depositReturnedAmount)} / {formatCurrency(contract.depositAmount)}</p>
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="outline" className={getContractStatusClasses(effectiveStatus)}>
-                    {getContractStatusLabel(effectiveStatus)}
-                  </Badge>
-                  <Badge variant="outline" className={getDepositStatusClasses(contract.depositStatus)}>
-                    {getDepositStatusLabel(contract.depositStatus)}
-                  </Badge>
-                </div>
-                <div className="text-sm text-slate-600 space-y-1">
-                  <p><strong>Inicio:</strong> {formatDate(contract.contractStart)}</p>
-                  <p><strong>Fin:</strong> {formatDate(contract.contractEnd)}{duration !== null ? ` (${duration} meses)` : ""}</p>
-                  <p><strong>Fianza:</strong> {formatCurrency(contract.depositReturnedAmount)} / {formatCurrency(contract.depositAmount)}</p>
-                </div>
-              </div>
-            )
-          })}
+              )
+            })
+          )}
         </div>
       </div>
 
-      {/* ─── Modal Editar ──────────────────────────────────────────────────── */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto bg-white">
-          <DialogHeader><DialogTitle>Editar contrato</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Editar contrato</DialogTitle>
+          </DialogHeader>
+
           {selectedContract && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
@@ -550,92 +788,143 @@ export function ContractsPage() {
 
               <div>
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Inquilino</label>
-                <Input value={selectedContract.tenant} onChange={(e) => updateSelectedField("tenant", e.target.value)} />
+                <Input
+                  value={selectedContract.tenant}
+                  onChange={(e) => updateSelectedField("tenant", e.target.value)}
+                />
               </div>
 
               <div>
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Código de contrato</label>
-                <Input value={selectedContract.contractName} onChange={(e) => updateSelectedField("contractName", e.target.value)} />
+                <Input
+                  value={selectedContract.contractName}
+                  onChange={(e) => updateSelectedField("contractName", e.target.value)}
+                />
               </div>
 
-              {/* EMAIL */}
               <div>
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Email</label>
-                <Input type="email" value={selectedContract.email} onChange={(e) => updateSelectedField("email", e.target.value)} />
+                <Input
+                  type="email"
+                  value={selectedContract.email}
+                  onChange={(e) => updateSelectedField("email", e.target.value)}
+                />
               </div>
 
               <div>
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Teléfono</label>
-                <Input value={selectedContract.phone} onChange={(e) => updateSelectedField("phone", e.target.value)} />
+                <Input
+                  value={selectedContract.phone}
+                  onChange={(e) => updateSelectedField("phone", e.target.value)}
+                />
               </div>
 
-              {/* INICIO */}
               <div>
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Inicio de contrato</label>
-                <Input type="date" value={selectedContract.contractStart || ""} onChange={(e) => updateSelectedField("contractStart", e.target.value)} />
+                <Input
+                  type="date"
+                  value={selectedContract.contractStart || ""}
+                  onChange={(e) => updateSelectedField("contractStart", e.target.value)}
+                />
               </div>
 
-              {/* DURACIÓN EN MESES ← NUEVO */}
               <div className="md:col-span-2 p-3 bg-blue-50 border border-blue-100 rounded-lg grid gap-3">
                 <label className="text-sm font-bold text-blue-800 flex items-center gap-2">
                   <Clock className="w-4 h-4" /> Duración del contrato
                 </label>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Select value={editDuration} onValueChange={(val) => {
-                    setEditDuration(val)
-                    if (val !== "0") applyEditDuration(parseInt(val))
-                  }}>
-                    <SelectTrigger className="bg-white"><SelectValue placeholder="Duración..." /></SelectTrigger>
+                  <Select
+                    value={editDuration}
+                    onValueChange={(val) => {
+                      setEditDuration(val)
+                      if (val !== "0") applyEditDuration(parseInt(val))
+                    }}
+                  >
+                    <SelectTrigger className="bg-white">
+                      <SelectValue placeholder="Duración..." />
+                    </SelectTrigger>
                     <SelectContent>
                       {CONTRACT_DURATIONS.map((d) => (
-                        <SelectItem key={d.value} value={d.value.toString()}>{d.label}</SelectItem>
+                        <SelectItem key={d.value} value={d.value.toString()}>
+                          {d.label}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
 
                   {editDuration === "0" && (
                     <div className="flex gap-2">
-                      <Input type="number" min="1" placeholder="Meses" value={editCustomDuration}
-                        onChange={(e) => setEditCustomDuration(e.target.value)} className="bg-white" />
-                      <Button type="button" variant="outline" className="shrink-0"
-                        onClick={() => applyEditDuration(parseInt(editCustomDuration))}>
+                      <Input
+                        type="number"
+                        min="1"
+                        placeholder="Meses"
+                        value={editCustomDuration}
+                        onChange={(e) => setEditCustomDuration(e.target.value)}
+                        className="bg-white"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => applyEditDuration(parseInt(editCustomDuration))}
+                      >
                         Aplicar
                       </Button>
                     </div>
                   )}
                 </div>
-                {/* Duración actual calculada */}
+
                 {selectedContract.contractStart && selectedContract.contractEnd && (() => {
                   const d = calcDurationMonths(selectedContract.contractStart, selectedContract.contractEnd)
-                  return d !== null ? <p className="text-xs text-blue-600">Duración actual: <strong>{d} meses</strong></p> : null
+                  return d !== null ? (
+                    <p className="text-xs text-blue-600">
+                      Duración actual: <strong>{d} meses</strong>
+                    </p>
+                  ) : null
                 })()}
               </div>
 
-              {/* FIN */}
               <div>
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Fin de contrato</label>
-                <Input type="date" value={selectedContract.contractEnd || ""} onChange={(e) => updateSelectedField("contractEnd", e.target.value)} />
+                <Input
+                  type="date"
+                  value={selectedContract.contractEnd || ""}
+                  onChange={(e) => updateSelectedField("contractEnd", e.target.value)}
+                />
               </div>
 
-              {/* FIANZA */}
               <div>
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Fianza total (€)</label>
-                <Input type="number" step="0.01" min="0" value={selectedContract.depositAmount}
-                  onChange={(e) => updateSelectedField("depositAmount", Number(e.target.value || 0))} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={selectedContract.depositAmount}
+                  onChange={(e) => updateSelectedField("depositAmount", Number(e.target.value || 0))}
+                />
               </div>
 
               <div>
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Importe devuelto (€)</label>
-                <Input type="number" step="0.01" min="0" value={selectedContract.depositReturnedAmount}
-                  onChange={(e) => updateSelectedField("depositReturnedAmount", Number(e.target.value || 0))} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={selectedContract.depositReturnedAmount}
+                  onChange={(e) => updateSelectedField("depositReturnedAmount", Number(e.target.value || 0))}
+                />
               </div>
 
-              {/* ESTADO FIANZA — incluye FIANZA DEVUELTA y FIANZA RETENIDA */}
               <div>
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Estado de la fianza</label>
-                <Select value={selectedContract.depositStatus}
-                  onValueChange={(value: DepositStatus) => updateSelectedField("depositStatus", value)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={selectedContract.depositStatus}
+                  onValueChange={(value: DepositStatus) => updateSelectedField("depositStatus", value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="pendiente">Pendiente</SelectItem>
                     <SelectItem value="parcial">Devuelta parcial</SelectItem>
@@ -650,16 +939,21 @@ export function ContractsPage() {
                   <p><strong>Resumen fianza:</strong></p>
                   <p>Total: {formatCurrency(selectedContract.depositAmount)}</p>
                   <p>Devuelto: {formatCurrency(selectedContract.depositReturnedAmount)}</p>
-                  <p>Pendiente: {formatCurrency(Math.max(0, selectedContract.depositAmount - selectedContract.depositReturnedAmount))}</p>
+                  <p>
+                    Pendiente: {formatCurrency(Math.max(0, selectedContract.depositAmount - selectedContract.depositReturnedAmount))}
+                  </p>
                 </div>
               </div>
 
-              {/* ESTADO CONTRATO — incluye Prorrogado */}
               <div className="md:col-span-2">
                 <label className="text-sm font-medium text-slate-700 mb-1 block">Estado del contrato</label>
-                <Select value={selectedContract.contractStatus}
-                  onValueChange={(value: ContractStatus) => updateSelectedField("contractStatus", value)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={selectedContract.contractStatus}
+                  onValueChange={(value: ContractStatus) => updateSelectedField("contractStatus", value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="borrador">Borrador</SelectItem>
                     <SelectItem value="pendiente_firma">Pendiente firma</SelectItem>
@@ -671,17 +965,31 @@ export function ContractsPage() {
                 </Select>
               </div>
 
-              {/* PDF */}
               <div className="md:col-span-2 border rounded-xl p-4 bg-slate-50">
                 <label className="text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
                   <UploadCloud className="w-4 h-4 text-blue-600" /> Adjuntar PDF del contrato
                 </label>
-                <Input type="file" accept="application/pdf" onChange={(e) => setPdfFile(e.target.files?.[0] || null)} className="bg-white" />
+                <Input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+                  className="bg-white"
+                />
                 <div className="flex flex-col sm:flex-row gap-2 mt-3">
-                  <Button type="button" variant="outline" onClick={() => openPreview(selectedContract.contractUrl)} disabled={!selectedContract.contractUrl}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => openPreview(selectedContract.contractUrl)}
+                    disabled={!selectedContract.contractUrl}
+                  >
                     <Eye className="w-4 h-4" /> Ver PDF actual
                   </Button>
-                  <Button type="button" variant="destructive" onClick={handleDeletePdf} disabled={!selectedContract.contractUrl || deletingPdf}>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={handleDeletePdf}
+                    disabled={!selectedContract.contractUrl || deletingPdf}
+                  >
                     <Trash2 className="w-4 h-4" /> {deletingPdf ? "Borrando..." : "Borrar PDF"}
                   </Button>
                 </div>
@@ -697,15 +1005,19 @@ export function ContractsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ─── Modal Visor PDF ───────────────────────────────────────────────── */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="w-[95vw] max-w-6xl h-[90vh] p-4 bg-white">
-          <DialogHeader><DialogTitle>Vista previa del contrato</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Vista previa del contrato</DialogTitle>
+          </DialogHeader>
           <div className="w-full h-full border rounded-lg overflow-hidden bg-slate-100">
-            {previewUrl
-              ? <iframe src={previewUrl} title="Vista previa" className="w-full h-[78vh] bg-white" />
-              : <div className="h-full flex items-center justify-center text-slate-500">No hay documento.</div>
-            }
+            {previewUrl ? (
+              <iframe src={previewUrl} title="Vista previa" className="w-full h-[78vh] bg-white" />
+            ) : (
+              <div className="h-full flex items-center justify-center text-slate-500">
+                No hay documento.
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

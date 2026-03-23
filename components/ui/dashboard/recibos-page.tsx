@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronUp,
   Trash2,
+  Wifi,
 } from "lucide-react"
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ type Contract = {
   contract_status: string
   start_date: string
   end_date: string
-  properties?: { name: string; address: string | null }[] | null  // ← array (Supabase join)
+  properties?: { name: string; address: string | null }[] | null
   tenants?: Tenant
 }
 
@@ -57,11 +58,22 @@ type Invoice = {
   gas: number
   luz: number
   agua: number
+  internet: number
   status: "pending" | "paid"
   sent_at: string | null
   paid_at: string | null
   notes: string | null
   created_at: string
+}
+
+// Gasto archivado para los desplegables
+type Expense = {
+  id: number
+  category: string
+  amount: number
+  date: string
+  property_id: number | null
+  receipt_url: string | null
 }
 
 type TenantWithContract = Tenant & {
@@ -95,7 +107,7 @@ function fmtFecha(s: string | null) {
 }
 
 function totalInvoice(inv: Invoice) {
-  return inv.amount + (inv.gas || 0) + (inv.luz || 0) + (inv.agua || 0)
+  return inv.amount + (inv.gas || 0) + (inv.luz || 0) + (inv.agua || 0) + (inv.internet || 0)
 }
 
 function mesAno(inv: Invoice) {
@@ -122,7 +134,15 @@ export function RecibosPage() {
   const [formGas, setFormGas] = useState("")
   const [formLuz, setFormLuz] = useState("")
   const [formAgua, setFormAgua] = useState("")
+  const [formInternet, setFormInternet] = useState("")
   const [formSaving, setFormSaving] = useState(false)
+
+  // Gastos archivados para los desplegables
+  const [expensesGas, setExpensesGas] = useState<Expense[]>([])
+  const [expensesLuz, setExpensesLuz] = useState<Expense[]>([])
+  const [expensesAgua, setExpensesAgua] = useState<Expense[]>([])
+  const [expensesInternet, setExpensesInternet] = useState<Expense[]>([])
+  const [loadingExpenses, setLoadingExpenses] = useState(false)
 
   // ─── Carga de datos ─────────────────────────────────────────────────────────
 
@@ -137,7 +157,7 @@ export function RecibosPage() {
         .in("contract_status", ["activo", "prorrogado", "vencido"]),
       supabase
         .from("invoices")
-        .select("id, contract_id, property_id, tenant_id, billing_year, billing_month, billing_period, due_date, amount, gas, luz, agua, status, sent_at, paid_at, notes, created_at")
+        .select("id, contract_id, property_id, tenant_id, billing_year, billing_month, billing_period, due_date, amount, gas, luz, agua, internet, status, sent_at, paid_at, notes, created_at")
         .order("billing_year", { ascending: false })
         .order("billing_month", { ascending: false }),
     ])
@@ -163,6 +183,25 @@ export function RecibosPage() {
     fetchAll()
   }, [fetchAll])
 
+  // ─── Cargar gastos archivados para un inmueble ────────────────────────────
+
+  async function fetchExpensesForProperty(propertyId: number) {
+    setLoadingExpenses(true)
+    const { data: expenses } = await supabase
+      .from("expenses")
+      .select("id, category, amount, date, property_id, receipt_url")
+      .eq("property_id", propertyId)
+      .in("category", ["Gas", "Electricidad", "Agua", "Internet"])
+      .order("date", { ascending: false })
+
+    const all: Expense[] = expenses || []
+    setExpensesGas(all.filter((e) => e.category === "Gas"))
+    setExpensesLuz(all.filter((e) => e.category === "Electricidad"))
+    setExpensesAgua(all.filter((e) => e.category === "Agua"))
+    setExpensesInternet(all.filter((e) => e.category === "Internet"))
+    setLoadingExpenses(false)
+  }
+
   // ─── Filtrado ────────────────────────────────────────────────────────────────
 
   const filtered = data.filter((t) =>
@@ -183,7 +222,11 @@ export function RecibosPage() {
     setFormGas("")
     setFormLuz("")
     setFormAgua("")
+    setFormInternet("")
     setShowGenerarForm(true)
+    if (tenant.contract?.property_id) {
+      fetchExpensesForProperty(tenant.contract.property_id)
+    }
   }
 
   async function handleGenerarRecibo() {
@@ -218,6 +261,7 @@ export function RecibosPage() {
       gas: parseFloat(formGas) || 0,
       luz: parseFloat(formLuz) || 0,
       agua: parseFloat(formAgua) || 0,
+      internet: parseFloat(formInternet) || 0,
       status: "pending",
       notes: `Recibo ${MESES[mes - 1]} ${ano}`,
     }
@@ -288,6 +332,44 @@ export function RecibosPage() {
     window.print()
   }
 
+  // ─── Helper: desplegable de facturas archivadas ───────────────────────────
+
+  function ExpenseSelect({
+    expenses,
+    onSelect,
+    loading,
+    label,
+  }: {
+    expenses: Expense[]
+    onSelect: (amount: string) => void
+    loading: boolean
+    label: string
+  }) {
+    if (loading) return <p className="text-xs text-slate-400">Cargando facturas...</p>
+    if (expenses.length === 0) return null
+    return (
+      <div className="mt-1">
+        <Select
+          onValueChange={(val) => {
+            if (val !== "manual") onSelect(val)
+          }}
+        >
+          <SelectTrigger className="h-8 text-xs text-slate-600 bg-slate-50 border-dashed">
+            <SelectValue placeholder={`📎 Usar factura archivada de ${label}`} />
+          </SelectTrigger>
+          <SelectContent className="bg-white">
+            {expenses.map((exp) => (
+              <SelectItem key={exp.id} value={String(exp.amount)}>
+                {fmtFecha(exp.date)} — {fmt(exp.amount)}
+                {exp.receipt_url ? " 📄" : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    )
+  }
+
   // ─── Totales globales ─────────────────────────────────────────────────────────
 
   const totalPendiente = data.reduce((s, t) => s + t.pendingTotal, 0)
@@ -349,7 +431,7 @@ export function RecibosPage() {
           {filtered.map((tenant) => {
             const expanded = expandedTenants.has(tenant.id)
             const isActive = hasActiveContract(tenant)
-            const property = tenant.contract?.properties?.[0]  // ← [0] por ser array
+            const property = tenant.contract?.properties?.[0]
 
             return (
               <div
@@ -459,9 +541,12 @@ export function RecibosPage() {
                                 {fmt(inv.amount)}
                               </TableCell>
                               <TableCell className="hidden md:table-cell text-xs text-slate-500">
-                                {(inv.gas || inv.luz || inv.agua) ? (
+                                {(inv.gas || inv.luz || inv.agua || inv.internet) ? (
                                   <span>
-                                    Gas {fmt(inv.gas || 0)} · Luz {fmt(inv.luz || 0)} · Agua {fmt(inv.agua || 0)}
+                                    {inv.gas ? `Gas ${fmt(inv.gas)} · ` : ""}
+                                    {inv.luz ? `Luz ${fmt(inv.luz)} · ` : ""}
+                                    {inv.agua ? `Agua ${fmt(inv.agua)}` : ""}
+                                    {inv.internet ? ` · Internet ${fmt(inv.internet)}` : ""}
                                   </span>
                                 ) : (
                                   <span className="text-slate-300">—</span>
@@ -532,9 +617,17 @@ export function RecibosPage() {
           {viewInvoice && (() => {
             const tenant = getInvoiceTenant(viewInvoice)
             const contract = tenant?.contract
-            const prop = contract?.properties?.[0]           // ← [0] por ser array
+            const prop = contract?.properties?.[0]
             const propertyAddr = prop?.address || prop?.name || "—"
             const total = totalInvoice(viewInvoice)
+
+            // Filas de suministros (solo las que tienen valor > 0)
+            const suministros: [string, number][] = [
+              ["Gas:", viewInvoice.gas || 0],
+              ["Luz:", viewInvoice.luz || 0],
+              ["Agua:", viewInvoice.agua || 0],
+              ["Internet:", viewInvoice.internet || 0],
+            ].filter(([, val]) => (val as number) > 0) as [string, number][]
 
             return (
               <div>
@@ -555,9 +648,7 @@ export function RecibosPage() {
                         ["Arrendatario:", tenant?.full_name || "—"],
                         ["Dirección inmueble:", propertyAddr],
                         ["Alquiler:", fmt(viewInvoice.amount)],
-                        ["Gas:", fmt(viewInvoice.gas || 0)],
-                        ["Luz:", fmt(viewInvoice.luz || 0)],
-                        ["Agua:", fmt(viewInvoice.agua || 0)],
+                        ...suministros.map(([label, val]) => [label, fmt(val as number)]),
                       ].map(([label, value]) => (
                         <tr key={label} className="border border-slate-200">
                           <td className="p-2 text-slate-500 w-40">{label}</td>
@@ -656,7 +747,7 @@ export function RecibosPage() {
             <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800">
               Inmueble:{" "}
               <strong>
-                {selectedTenant?.contract?.properties?.[0]?.name ||   // ← [0] por ser array
+                {selectedTenant?.contract?.properties?.[0]?.name ||
                   selectedTenant?.contract?.properties?.[0]?.address ||
                   "—"}
               </strong>
@@ -697,20 +788,27 @@ export function RecibosPage() {
               </div>
             </div>
 
-            {/* Importes */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-semibold text-slate-700 block mb-1">
-                  Alquiler (€)
-                </label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={formAlquiler}
-                  onChange={(e) => setFormAlquiler(e.target.value)}
-                  placeholder="0.00"
-                />
-              </div>
+            {/* Alquiler */}
+            <div>
+              <label className="text-sm font-semibold text-slate-700 block mb-1">
+                Alquiler (€)
+              </label>
+              <Input
+                type="number"
+                step="0.01"
+                value={formAlquiler}
+                onChange={(e) => setFormAlquiler(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+
+            {/* Suministros — con desplegables de facturas */}
+            <div className="border border-slate-200 rounded-lg p-3 space-y-3 bg-slate-50">
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                Suministros — puedes usar una factura archivada
+              </p>
+
+              {/* Gas */}
               <div>
                 <label className="text-sm font-semibold text-slate-700 block mb-1">Gas (€)</label>
                 <Input
@@ -719,8 +817,30 @@ export function RecibosPage() {
                   value={formGas}
                   onChange={(e) => setFormGas(e.target.value)}
                   placeholder="0.00"
+                  className="bg-white"
                 />
+                {expensesGas.length > 0 && (
+                  <div className="mt-1">
+                    <Select onValueChange={(val) => setFormGas(val)}>
+                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed">
+                        <SelectValue placeholder="📎 Usar factura archivada de Gas" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white">
+                        {expensesGas.map((exp) => (
+                          <SelectItem key={exp.id} value={String(exp.amount)}>
+                            {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {loadingExpenses && (
+                  <p className="text-xs text-slate-400 mt-1">Cargando facturas...</p>
+                )}
               </div>
+
+              {/* Luz */}
               <div>
                 <label className="text-sm font-semibold text-slate-700 block mb-1">Luz (€)</label>
                 <Input
@@ -729,8 +849,27 @@ export function RecibosPage() {
                   value={formLuz}
                   onChange={(e) => setFormLuz(e.target.value)}
                   placeholder="0.00"
+                  className="bg-white"
                 />
+                {expensesLuz.length > 0 && (
+                  <div className="mt-1">
+                    <Select onValueChange={(val) => setFormLuz(val)}>
+                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed">
+                        <SelectValue placeholder="📎 Usar factura archivada de Luz" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white">
+                        {expensesLuz.map((exp) => (
+                          <SelectItem key={exp.id} value={String(exp.amount)}>
+                            {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
+
+              {/* Agua */}
               <div>
                 <label className="text-sm font-semibold text-slate-700 block mb-1">Agua (€)</label>
                 <Input
@@ -739,7 +878,55 @@ export function RecibosPage() {
                   value={formAgua}
                   onChange={(e) => setFormAgua(e.target.value)}
                   placeholder="0.00"
+                  className="bg-white"
                 />
+                {expensesAgua.length > 0 && (
+                  <div className="mt-1">
+                    <Select onValueChange={(val) => setFormAgua(val)}>
+                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed">
+                        <SelectValue placeholder="📎 Usar factura archivada de Agua" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white">
+                        {expensesAgua.map((exp) => (
+                          <SelectItem key={exp.id} value={String(exp.amount)}>
+                            {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+
+              {/* Internet */}
+              <div>
+                <label className="text-sm font-semibold text-slate-700 block mb-1 flex items-center gap-1">
+                  <Wifi className="w-3.5 h-3.5 text-slate-500" /> Internet (€)
+                </label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={formInternet}
+                  onChange={(e) => setFormInternet(e.target.value)}
+                  placeholder="0.00"
+                  className="bg-white"
+                />
+                {expensesInternet.length > 0 && (
+                  <div className="mt-1">
+                    <Select onValueChange={(val) => setFormInternet(val)}>
+                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed">
+                        <SelectValue placeholder="📎 Usar factura archivada de Internet" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white">
+                        {expensesInternet.map((exp) => (
+                          <SelectItem key={exp.id} value={String(exp.amount)}>
+                            {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -753,7 +940,8 @@ export function RecibosPage() {
                   (parseFloat(formAlquiler) || 0) +
                     (parseFloat(formGas) || 0) +
                     (parseFloat(formLuz) || 0) +
-                    (parseFloat(formAgua) || 0)
+                    (parseFloat(formAgua) || 0) +
+                    (parseFloat(formInternet) || 0)
                 )}
               </span>
             </div>

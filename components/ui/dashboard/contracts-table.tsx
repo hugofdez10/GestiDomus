@@ -5,9 +5,10 @@ import { supabase } from "@/lib/supabase"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { deleteContract } from "@/lib/deleteContract"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { CheckCircle2, FileText, Search, ShieldCheck } from "lucide-react"
+import { CheckCircle2, FileText, Search, ShieldCheck, Trash2, Pencil } from "lucide-react"
 
 type InvoiceMap = Record<string, { id: string; status: string }>
 
@@ -85,6 +86,7 @@ export function ContractsTable() {
   const [invoiceMap, setInvoiceMap] = useState<InvoiceMap>({})
   const [loading, setLoading] = useState(true)
   const [payingId, setPayingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
 
@@ -134,9 +136,9 @@ export function ContractsTable() {
     }
 
     const nextInvoiceMap: InvoiceMap = {}
-      ; (invoicesRes.data || []).forEach((invoice: any) => {
-        nextInvoiceMap[invoice.contract_id] = { id: invoice.id, status: invoice.status }
-      })
+    ;(invoicesRes.data || []).forEach((invoice: any) => {
+      nextInvoiceMap[invoice.contract_id] = { id: invoice.id, status: invoice.status }
+    })
 
     setContracts(contractsRes.data || [])
     setInvoiceMap(nextInvoiceMap)
@@ -268,6 +270,25 @@ export function ContractsTable() {
     fetchData()
   }
 
+  async function handleDeleteContract(contract: any) {
+    const ok = window.confirm(
+      `¿Eliminar el contrato ${contract.contract_code || ""}?\n\nEsto borrará también recibos y pagos relacionados.`
+    )
+    if (!ok) return
+
+    try {
+      setDeletingId(contract.id)
+      await deleteContract(contract.id)
+      await fetchData()
+      alert("Contrato eliminado correctamente.")
+    } catch (error: any) {
+      console.error(error)
+      alert("Error al eliminar el contrato: " + (error?.message || "Sin detalle"))
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div className="bg-white p-5 lg:p-6 rounded-xl border shadow-sm w-full overflow-hidden">
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-5">
@@ -321,7 +342,7 @@ export function ContractsTable() {
               <TableHead className="w-[14%]">Vigencia</TableHead>
               <TableHead className="w-[10%]">Estado</TableHead>
               <TableHead className="w-[10%]">Cobro mes</TableHead>
-              <TableHead className="w-[12%] text-right">Acciones</TableHead>
+              <TableHead className="w-[18%] text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
 
@@ -342,6 +363,7 @@ export function ContractsTable() {
               filteredContracts.map((contract) => {
                 const currentInvoice = invoiceMap[contract.id]
                 const canCollect = ["active", "signed"].includes(contract.contract_status)
+                const isDeleting = deletingId === contract.id
 
                 return (
                   <TableRow key={contract.id} className="hover:bg-slate-50/60">
@@ -419,23 +441,48 @@ export function ContractsTable() {
                     </TableCell>
 
                     <TableCell className="text-right align-top">
-                      <div className="flex justify-end items-start gap-2">
-                        {contract.document_path && (
+                      <div className="flex justify-end items-center gap-2 flex-wrap">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="shrink-0"
+                        >
+                          <Pencil className="w-4 h-4 mr-1" />
+                          Editar
+                        </Button>
+
+                        {contract.document_path ? (
                           <a
                             href={contract.document_path}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-2 rounded-full hover:bg-indigo-50 text-indigo-600 shrink-0"
-                            title="Ver contrato"
+                            className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 shrink-0"
+                            title="Ver contrato PDF"
                           >
                             <FileText className="w-4 h-4" />
+                            PDF
                           </a>
+                        ) : (
+                          <Button size="sm" variant="outline" disabled className="shrink-0">
+                            <FileText className="w-4 h-4 mr-1" />
+                            PDF
+                          </Button>
                         )}
 
                         <Button
                           size="sm"
+                          onClick={() => handleDeleteContract(contract)}
+                          disabled={isDeleting || payingId === contract.id}
+                          className="bg-red-600 hover:bg-red-700 text-white shrink-0"
+                        >
+                          <Trash2 className="w-4 h-4 mr-1" />
+                          {isDeleting ? "Eliminando..." : "Eliminar"}
+                        </Button>
+
+                        <Button
+                          size="sm"
                           onClick={() => handleRegisterPayment(contract)}
-                          disabled={!canCollect || payingId === contract.id || currentInvoice?.status === "paid"}
+                          disabled={!canCollect || payingId === contract.id || currentInvoice?.status === "paid" || isDeleting}
                           className="bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
                         >
                           <CheckCircle2 className="w-4 h-4 mr-1" />

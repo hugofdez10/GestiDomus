@@ -23,6 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { supabase } from "@/utils/supabase/client"
+import { deleteContract } from "@/lib/deleteContract"
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type ContractStatus =
@@ -293,6 +294,7 @@ export function ContractsPage() {
   const [previewUrl, setPreviewUrl] = useState("")
   const [saving, setSaving] = useState(false)
   const [deletingPdf, setDeletingPdf] = useState(false)
+  const [deletingContractId, setDeletingContractId] = useState<string | number | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
 
   const [editDuration, setEditDuration] = useState<string>("0")
@@ -459,6 +461,25 @@ export function ContractsPage() {
       alert("Error al borrar el PDF: " + e.message)
     } finally {
       setDeletingPdf(false)
+    }
+  }
+
+  async function handleDeleteContract(contract: ContractRow) {
+    const ok = window.confirm(
+      `¿Seguro que quieres eliminar el contrato ${contract.contractName || ""}?\n\nEsto borrará también recibos y pagos relacionados.`
+    )
+
+    if (!ok) return
+
+    try {
+      setDeletingContractId(contract.id)
+      await deleteContract(String(contract.id))
+      await loadContracts()
+      alert("Contrato eliminado correctamente.")
+    } catch (e: any) {
+      alert("Error al eliminar contrato: " + (e?.message || "Sin detalle"))
+    } finally {
+      setDeletingContractId(null)
     }
   }
 
@@ -707,10 +728,11 @@ export function ContractsPage() {
                       </TableCell>
 
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
+                        <div className="flex justify-end gap-2 flex-wrap">
                           <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
                             <Pencil className="w-4 h-4" /> Editar
                           </Button>
+
                           <Button
                             variant="outline"
                             size="sm"
@@ -718,6 +740,16 @@ export function ContractsPage() {
                             disabled={!contract.contractUrl}
                           >
                             <Eye className="w-4 h-4" /> PDF
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            onClick={() => handleDeleteContract(contract)}
+                            disabled={deletingContractId === contract.id}
+                            className="bg-red-600 hover:bg-red-700 text-white"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            {deletingContractId === contract.id ? "Eliminando..." : "Eliminar"}
                           </Button>
                         </div>
                       </TableCell>
@@ -747,9 +779,31 @@ export function ContractsPage() {
                       <p className="text-sm text-slate-600">{contract.tenant}</p>
                       {contract.email && <p className="text-xs text-blue-500">{contract.email}</p>}
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
-                      <Pencil className="w-4 h-4" /> Editar
-                    </Button>
+
+                    <div className="flex flex-col gap-2">
+                      <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
+                        <Pencil className="w-4 h-4" /> Editar
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openPreview(contract.contractUrl)}
+                        disabled={!contract.contractUrl}
+                      >
+                        <Eye className="w-4 h-4" /> PDF
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        onClick={() => handleDeleteContract(contract)}
+                        disabled={deletingContractId === contract.id}
+                        className="bg-red-600 hover:bg-red-700 text-white"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        {deletingContractId === contract.id ? "Eliminando..." : "Eliminar"}
+                      </Button>
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap gap-2">

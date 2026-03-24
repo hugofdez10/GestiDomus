@@ -25,7 +25,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { supabase } from "@/utils/supabase/client"
 import { deleteContract } from "@/lib/deleteContract"
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
 type ContractStatus =
   | "borrador"
   | "pendiente_firma"
@@ -41,30 +40,12 @@ type DepositStatus =
   | "retenida"
 
 type ContractDbStatus =
-  | "draft"
-  | "sent"
-  | "signed"
-  | "active"
-  | "expired"
-  | "terminated"
-  | "renewed"
-  | "borrador"
-  | "pendiente_firma"
-  | "activo"
-  | "vencido"
-  | "rescindido"
-  | "prorrogado"
+  | "draft" | "sent" | "signed" | "active" | "expired" | "terminated" | "renewed"
+  | "borrador" | "pendiente_firma" | "activo" | "vencido" | "rescindido" | "prorrogado"
 
 type DepositDbStatus =
-  | "pending"
-  | "received"
-  | "returned"
-  | "partially_returned"
-  | "withheld"
-  | "pendiente"
-  | "parcial"
-  | "devuelta"
-  | "retenida"
+  | "pending" | "received" | "returned" | "partially_returned" | "withheld"
+  | "pendiente" | "parcial" | "devuelta" | "retenida"
 
 type ContractRow = {
   id: string | number
@@ -83,7 +64,6 @@ type ContractRow = {
   contractUrl?: string
 }
 
-// ─── Mapeos estado DB <-> UI ──────────────────────────────────────────────────
 function normalizeContractStatusFromDb(value?: ContractDbStatus): ContractStatus {
   switch (value) {
     case "draft":
@@ -133,6 +113,25 @@ function normalizeDepositStatusFromDb(value?: DepositDbStatus): DepositStatus {
 function mapContractStatusToDb(status: ContractStatus): ContractDbStatus {
   switch (status) {
     case "borrador":
+      return "draft"
+    case "pendiente_firma":
+      return "sent"
+    case "activo":
+      return "active"
+    case "vencido":
+      return "expired"
+    case "rescindido":
+      return "terminated"
+    case "prorrogado":
+      return "renewed"
+    default:
+      return "draft"
+  }
+}
+
+function mapContractStatusToDbLegacy(status: ContractStatus): ContractDbStatus {
+  switch (status) {
+    case "borrador":
       return "borrador"
     case "pendiente_firma":
       return "pendiente_firma"
@@ -143,7 +142,7 @@ function mapContractStatusToDb(status: ContractStatus): ContractDbStatus {
     case "rescindido":
       return "rescindido"
     case "prorrogado":
-      return "prorrogado"
+      return "activo" // fallback legacy seguro
     default:
       return "borrador"
   }
@@ -152,19 +151,18 @@ function mapContractStatusToDb(status: ContractStatus): ContractDbStatus {
 function mapDepositStatusToDb(status: DepositStatus): DepositDbStatus {
   switch (status) {
     case "pendiente":
-      return "pendiente"
+      return "pending"
     case "parcial":
-      return "parcial"
+      return "partially_returned"
     case "devuelta":
-      return "devuelta"
+      return "returned"
     case "retenida":
-      return "retenida"
+      return "withheld"
     default:
-      return "pendiente"
+      return "pending"
   }
 }
 
-// ─── Utilidades de formato ────────────────────────────────────────────────────
 function formatDate(dateString: string) {
   if (!dateString) return "—"
   return new Date(dateString).toLocaleDateString("es-ES", {
@@ -189,7 +187,6 @@ function calcDurationMonths(start: string, end: string): number | null {
   return (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth())
 }
 
-// ─── Labels y colores ─────────────────────────────────────────────────────────
 function getContractStatusLabel(status: ContractStatus) {
   const map: Record<ContractStatus, string> = {
     pendiente_firma: "Pendiente firma",
@@ -219,9 +216,9 @@ function getAutoContractStatus(row: ContractRow): ContractStatus {
 
   if (!row.contractEnd) return row.contractStatus
 
-  const end = new Date(row.contractEnd)
-  const now = new Date()
-  const diffDays = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+  const diffDays = Math.ceil(
+    (new Date(row.contractEnd).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
+  )
 
   if (diffDays < 0) return "vencido"
   return "activo"
@@ -261,10 +258,10 @@ function normalizeDepositStatus(
   if (returned <= 0) return "pendiente"
   if (returned >= total && total > 0) return "devuelta"
   if (returned > 0 && returned < total) return "parcial"
+
   return currentStatus
 }
 
-// Opciones duración
 const CONTRACT_DURATIONS = [
   { label: "6 meses", value: 6 },
   { label: "11 meses", value: 11 },
@@ -275,19 +272,16 @@ const CONTRACT_DURATIONS = [
   { label: "Personalizado", value: 0 },
 ]
 
-// ─── Helpers relaciones Supabase ──────────────────────────────────────────────
 function getSingleRelation<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null
   return Array.isArray(value) ? value[0] ?? null : value
 }
 
-// ─── Componente principal ─────────────────────────────────────────────────────
 export function ContractsPage() {
   const [contracts, setContracts] = useState<ContractRow[]>([])
   const [search, setSearch] = useState("")
   const [contractStatusFilter, setContractStatusFilter] = useState<string>("all")
   const [depositStatusFilter, setDepositStatusFilter] = useState<string>("all")
-
   const [selectedContract, setSelectedContract] = useState<ContractRow | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -296,7 +290,6 @@ export function ContractsPage() {
   const [deletingPdf, setDeletingPdf] = useState(false)
   const [deletingContractId, setDeletingContractId] = useState<string | number | null>(null)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
-
   const [editDuration, setEditDuration] = useState<string>("0")
   const [editCustomDuration, setEditCustomDuration] = useState<string>("")
 
@@ -417,25 +410,23 @@ export function ContractsPage() {
 
   function applyEditDuration(months: number) {
     if (!selectedContract?.contractStart || !months) return
+
     const start = new Date(selectedContract.contractStart)
     start.setMonth(start.getMonth() + months)
+
     updateSelectedField("contractEnd", start.toISOString().split("T")[0])
   }
 
   async function uploadPdf(contractId: string | number, file: File) {
     const extension = file.name.split(".").pop()?.toLowerCase()
-    if (extension !== "pdf") {
-      throw new Error("Solo se permiten PDF.")
-    }
+    if (extension !== "pdf") throw new Error("Solo se permiten PDF.")
 
     const filePath = `contracts/contract-${contractId}-${Date.now()}.pdf`
 
-    const { error } = await supabase.storage
-      .from("vault")
-      .upload(filePath, file, {
-        upsert: true,
-        contentType: "application/pdf",
-      })
+    const { error } = await supabase.storage.from("vault").upload(filePath, file, {
+      upsert: true,
+      contentType: "application/pdf",
+    })
 
     if (error) throw error
 
@@ -520,22 +511,24 @@ export function ContractsPage() {
         if (error) throw error
       }
 
-      const { error } = await supabase
-        .from("contracts")
-        .update({
-          contract_code: selectedContract.contractName || null,
-          deposit_status: mapDepositStatusToDb(finalDepositStatus),
-          deposit_amount: Number(selectedContract.depositAmount || 0),
-          deposit_returned_amount: Number(selectedContract.depositReturnedAmount || 0),
-          start_date: selectedContract.contractStart || null,
-          end_date: selectedContract.contractEnd || null,
-          contract_status: mapContractStatusToDb(selectedContract.contractStatus),
-          document_path: finalDocumentUrl,
-        })
-        .eq("id", selectedContract.id)
 
-      if (error) throw error
+const updatePayload = {
+  contract_code: selectedContract.contractName || null,
+  deposit_status: mapDepositStatusToDb(finalDepositStatus),
+  deposit_amount: Number(selectedContract.depositAmount || 0),
+  deposit_returned_amount: Number(selectedContract.depositReturnedAmount || 0),
+  start_date: selectedContract.contractStart || null,
+  end_date: selectedContract.contractEnd || null,
+  contract_status: mapContractStatusToDb(selectedContract.contractStatus),
+  document_path: finalDocumentUrl,
+}
 
+const { error } = await supabase
+  .from("contracts")
+  .update(updatePayload)
+  .eq("id", selectedContract.id)
+
+if (error) throw error
       setEditOpen(false)
       setSelectedContract(null)
       setPdfFile(null)
@@ -568,10 +561,30 @@ export function ContractsPage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {[
-            { label: "Activos", value: activeCount, icon: <FileSignature className="w-4 h-4" />, color: "text-slate-900" },
-            { label: "Pend. firma", value: pendingSignatureCount, icon: null, color: "text-amber-600" },
-            { label: "Prorrogados", value: prorrogadoCount, icon: <Clock className="w-4 h-4" />, color: "text-purple-700" },
-            { label: "Fianzas pend.", value: depositPendingCount, icon: <ShieldCheck className="w-4 h-4" />, color: "text-red-600" },
+            {
+              label: "Activos",
+              value: activeCount,
+              icon: <FileSignature className="w-4 h-4" />,
+              color: "text-slate-900",
+            },
+            {
+              label: "Pend. firma",
+              value: pendingSignatureCount,
+              icon: null,
+              color: "text-amber-600",
+            },
+            {
+              label: "Prorrogados",
+              value: prorrogadoCount,
+              icon: <Clock className="w-4 h-4" />,
+              color: "text-purple-700",
+            },
+            {
+              label: "Fianzas pend.",
+              value: depositPendingCount,
+              icon: <ShieldCheck className="w-4 h-4" />,
+              color: "text-red-600",
+            },
           ].map((stat) => (
             <div
               key={stat.label}
@@ -662,6 +675,7 @@ export function ContractsPage() {
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
             </TableHeader>
+
             <TableBody>
               {filteredContracts.length === 0 ? (
                 <TableRow>
@@ -684,7 +698,10 @@ export function ContractsPage() {
                         <p className="font-semibold text-slate-700">{contract.tenant}</p>
                         <p className="text-xs text-slate-400">{contract.phone || "—"}</p>
                         {contract.email ? (
-                          <a href={`mailto:${contract.email}`} className="text-xs text-blue-500 hover:underline">
+                          <a
+                            href={`mailto:${contract.email}`}
+                            className="text-xs text-blue-500 hover:underline"
+                          >
                             {contract.email}
                           </a>
                         ) : (
@@ -732,7 +749,6 @@ export function ContractsPage() {
                           <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
                             <Pencil className="w-4 h-4" /> Editar
                           </Button>
-
                           <Button
                             variant="outline"
                             size="sm"
@@ -741,7 +757,6 @@ export function ContractsPage() {
                           >
                             <Eye className="w-4 h-4" /> PDF
                           </Button>
-
                           <Button
                             size="sm"
                             onClick={() => handleDeleteContract(contract)}
@@ -784,7 +799,6 @@ export function ContractsPage() {
                       <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
                         <Pencil className="w-4 h-4" /> Editar
                       </Button>
-
                       <Button
                         variant="outline"
                         size="sm"
@@ -793,7 +807,6 @@ export function ContractsPage() {
                       >
                         <Eye className="w-4 h-4" /> PDF
                       </Button>
-
                       <Button
                         size="sm"
                         onClick={() => handleDeleteContract(contract)}
@@ -966,7 +979,9 @@ export function ContractsPage() {
                   step="0.01"
                   min="0"
                   value={selectedContract.depositReturnedAmount}
-                  onChange={(e) => updateSelectedField("depositReturnedAmount", Number(e.target.value || 0))}
+                  onChange={(e) =>
+                    updateSelectedField("depositReturnedAmount", Number(e.target.value || 0))
+                  }
                 />
               </div>
 
@@ -976,9 +991,7 @@ export function ContractsPage() {
                   value={selectedContract.depositStatus}
                   onValueChange={(value: DepositStatus) => updateSelectedField("depositStatus", value)}
                 >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="pendiente">Pendiente</SelectItem>
                     <SelectItem value="parcial">Devuelta parcial</SelectItem>
@@ -994,7 +1007,9 @@ export function ContractsPage() {
                   <p>Total: {formatCurrency(selectedContract.depositAmount)}</p>
                   <p>Devuelto: {formatCurrency(selectedContract.depositReturnedAmount)}</p>
                   <p>
-                    Pendiente: {formatCurrency(Math.max(0, selectedContract.depositAmount - selectedContract.depositReturnedAmount))}
+                    Pendiente: {formatCurrency(
+                      Math.max(0, selectedContract.depositAmount - selectedContract.depositReturnedAmount)
+                    )}
                   </p>
                 </div>
               </div>
@@ -1005,9 +1020,7 @@ export function ContractsPage() {
                   value={selectedContract.contractStatus}
                   onValueChange={(value: ContractStatus) => updateSelectedField("contractStatus", value)}
                 >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="borrador">Borrador</SelectItem>
                     <SelectItem value="pendiente_firma">Pendiente firma</SelectItem>
@@ -1023,12 +1036,14 @@ export function ContractsPage() {
                 <label className="text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
                   <UploadCloud className="w-4 h-4 text-blue-600" /> Adjuntar PDF del contrato
                 </label>
+
                 <Input
                   type="file"
                   accept="application/pdf"
                   onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
                   className="bg-white"
                 />
+
                 <div className="flex flex-col sm:flex-row gap-2 mt-3">
                   <Button
                     type="button"
@@ -1038,6 +1053,7 @@ export function ContractsPage() {
                   >
                     <Eye className="w-4 h-4" /> Ver PDF actual
                   </Button>
+
                   <Button
                     type="button"
                     variant="destructive"
@@ -1064,6 +1080,7 @@ export function ContractsPage() {
           <DialogHeader>
             <DialogTitle>Vista previa del contrato</DialogTitle>
           </DialogHeader>
+
           <div className="w-full h-full border rounded-lg overflow-hidden bg-slate-100">
             {previewUrl ? (
               <iframe src={previewUrl} title="Vista previa" className="w-full h-[78vh] bg-white" />

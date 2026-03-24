@@ -70,6 +70,31 @@ const INITIAL_FORM: FormDataState = {
   notes: "",
 }
 
+const CONTRACT_STATUS_TO_DB: Record<ContractStatus, string> = {
+  borrador: "draft",
+  pendiente_firma: "sent",
+  activo: "active",
+  vencido: "expired",
+  rescindido: "terminated",
+  prorrogado: "renewed",
+}
+
+const CONTRACT_STATUS_TO_DB_LEGACY: Record<ContractStatus, string> = {
+  borrador: "borrador",
+  pendiente_firma: "pendiente_firma",
+  activo: "activo",
+  vencido: "vencido",
+  rescindido: "rescindido",
+  prorrogado: "activo", // fallback legacy seguro
+}
+
+const DEPOSIT_STATUS_TO_DB: Record<DepositStatus, string> = {
+  pendiente: "pending",
+  parcial: "partially_returned",
+  devuelta: "returned",
+  retenida: "withheld",
+}
+
 function buildContractCode() {
   const year = new Date().getFullYear()
   const suffix = Date.now().toString().slice(-6)
@@ -190,24 +215,25 @@ export function AddContractForm({
       const propertyId = Number(formData.property_id)
       const tenantId = Number(formData.tenant_id)
 
-      const { error: insertError } = await supabase.from("contracts").insert([
-        {
-          property_id: propertyId,
-          tenant_id: tenantId,
-          contract_code: buildContractCode(),
-          start_date: formData.start_date,
-          end_date: formData.end_date,
-          monthly_rent: Number(formData.monthly_rent || 0),
-          deposit_amount: Number(formData.deposit_amount || 0),
-          deposit_returned_amount: 0,
-          contract_status: formData.contract_status,
-          deposit_status: formData.deposit_status,
-          document_path: documentPath,
-          notes: formData.notes || null,
-        },
-      ])
 
-      if (insertError) throw insertError
+const payload = {
+  property_id: propertyId,
+  tenant_id: tenantId,
+  contract_code: buildContractCode(),
+  start_date: formData.start_date,
+  end_date: formData.end_date,
+  monthly_rent: Number(formData.monthly_rent || 0),
+  deposit_amount: Number(formData.deposit_amount || 0),
+  deposit_returned_amount: 0,
+  contract_status: CONTRACT_STATUS_TO_DB[formData.contract_status] ?? "active",
+  deposit_status: DEPOSIT_STATUS_TO_DB[formData.deposit_status] ?? "pending",
+  document_path: documentPath,
+  notes: formData.notes || null,
+}
+
+const { error: insertError } = await supabase.from("contracts").insert([payload])
+
+if (insertError) throw insertError
 
       const { error: propertyError } = await supabase
         .from("properties")
@@ -253,11 +279,7 @@ export function AddContractForm({
               <Select
                 value={formData.property_id}
                 onValueChange={(value) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    property_id: value,
-                    monthly_rent: "",
-                  }))
+                  setFormData((prev) => ({ ...prev, property_id: value, monthly_rent: "" }))
                 }
               >
                 <SelectTrigger>
@@ -277,12 +299,7 @@ export function AddContractForm({
               <Label>Inquilino</Label>
               <Select
                 value={formData.tenant_id}
-                onValueChange={(value) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    tenant_id: value,
-                  }))
-                }
+                onValueChange={(value) => setFormData((prev) => ({ ...prev, tenant_id: value }))}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Selecciona un inquilino" />
@@ -304,27 +321,16 @@ export function AddContractForm({
               <Input
                 type="date"
                 value={formData.start_date}
-                onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    start_date: e.target.value,
-                  }))
-                }
+                onChange={(e) => setFormData((prev) => ({ ...prev, start_date: e.target.value }))}
                 required
               />
             </div>
-
             <div className="grid gap-2">
               <Label>Fin de contrato</Label>
               <Input
                 type="date"
                 value={formData.end_date}
-                onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    end_date: e.target.value,
-                  }))
-                }
+                onChange={(e) => setFormData((prev) => ({ ...prev, end_date: e.target.value }))}
                 required
               />
             </div>
@@ -338,16 +344,10 @@ export function AddContractForm({
                 step="0.01"
                 min="0"
                 value={formData.monthly_rent}
-                onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    monthly_rent: e.target.value,
-                  }))
-                }
+                onChange={(e) => setFormData((prev) => ({ ...prev, monthly_rent: e.target.value }))}
                 required
               />
             </div>
-
             <div className="grid gap-2">
               <Label>Fianza (€)</Label>
               <Input
@@ -355,12 +355,7 @@ export function AddContractForm({
                 step="0.01"
                 min="0"
                 value={formData.deposit_amount}
-                onChange={(e) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    deposit_amount: e.target.value,
-                  }))
-                }
+                onChange={(e) => setFormData((prev) => ({ ...prev, deposit_amount: e.target.value }))}
               />
             </div>
           </div>
@@ -371,15 +366,10 @@ export function AddContractForm({
               <Select
                 value={formData.contract_status}
                 onValueChange={(value: ContractStatus) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    contract_status: value,
-                  }))
+                  setFormData((prev) => ({ ...prev, contract_status: value }))
                 }
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent className="bg-white">
                   <SelectItem value="borrador">Borrador</SelectItem>
                   <SelectItem value="pendiente_firma">Pendiente firma</SelectItem>
@@ -396,15 +386,10 @@ export function AddContractForm({
               <Select
                 value={formData.deposit_status}
                 onValueChange={(value: DepositStatus) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    deposit_status: value,
-                  }))
+                  setFormData((prev) => ({ ...prev, deposit_status: value }))
                 }
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent className="bg-white">
                   <SelectItem value="pendiente">Pendiente</SelectItem>
                   <SelectItem value="parcial">Devuelta parcial</SelectItem>
@@ -419,12 +404,7 @@ export function AddContractForm({
             <Label>Notas</Label>
             <Input
               value={formData.notes}
-              onChange={(e) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  notes: e.target.value,
-                }))
-              }
+              onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
               placeholder="Observaciones, cláusulas o contexto"
             />
           </div>

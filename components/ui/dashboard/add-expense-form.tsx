@@ -7,9 +7,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Plus, UploadCloud, UserCircle, Home } from "lucide-react"
+import { Plus, UploadCloud, UserCircle, Home, FileText, X } from "lucide-react"
 
-// Lista de conceptos basada en tu documento Word
 const CONCEPTOS = [
   "Seguro", "Limpieza", "Comunidad", "Electricidad", "Gas", 
   "Agua", "IBI", "Internet", "Hipoteca", "Derrama", "Basura", "Otro"
@@ -23,7 +22,7 @@ export function AddExpenseForm({ properties }: { properties?: any[] }) {
   const [propertiesList, setPropertiesList] = useState<any[]>(properties || [])
   
   const [formData, setFormData] = useState({
-    category: "", // Ahora esto será el desplegable
+    category: "",
     amount: "",
     date: new Date().toISOString().split('T')[0],
     property_id: "general",
@@ -34,7 +33,6 @@ export function AddExpenseForm({ properties }: { properties?: any[] }) {
   useEffect(() => {
     if (open) {
       async function fetchProperties() {
-        // Añadido: .order('name') para que salgan siempre ordenados
         const { data } = await supabase.from('properties').select('id, name').order('name')
         if (data) setPropertiesList(data)
       }
@@ -86,6 +84,10 @@ export function AddExpenseForm({ properties }: { properties?: any[] }) {
       window.location.reload()
     }
     setLoading(false)
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setFile(e.target.files?.[0] || null)
   }
 
   return (
@@ -165,15 +167,53 @@ export function AddExpenseForm({ properties }: { properties?: any[] }) {
             </div>
           </div>
 
-          <div className="grid gap-2 pt-2 border-t mt-2">
-            <Label className="flex items-center gap-2 text-blue-600 font-bold">
-              <UploadCloud className="w-4 h-4" /> Adjuntar Factura / Ticket
+          {/* ─── MEJORADO: sección de adjuntar factura más visible ─────────── */}
+          <div className={`grid gap-2 p-3 rounded-lg border-2 transition-colors ${file ? 'border-green-400 bg-green-50' : 'border-dashed border-blue-300 bg-blue-50'}`}>
+            <Label className="flex items-center gap-2 text-blue-700 font-bold">
+              <UploadCloud className="w-4 h-4" />
+              Adjuntar Factura / PDF
+              <span className="text-xs font-normal text-blue-500">(opcional)</span>
             </Label>
-            <Input type="file" accept="image/*,.pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} className="text-xs cursor-pointer" />
+
+            {/* Vista previa si hay archivo seleccionado */}
+            {file ? (
+              <div className="flex items-center gap-2 bg-white border border-green-300 rounded-md px-3 py-2">
+                <FileText className="w-5 h-5 text-green-600 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-green-800 truncate">{file.name}</p>
+                  <p className="text-xs text-green-600">{(file.size / 1024).toFixed(0)} KB — listo para subir ✅</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFile(null)}
+                  className="p-1 hover:bg-red-100 rounded text-slate-400 hover:text-red-600 transition-colors"
+                  title="Quitar archivo"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <label className="flex flex-col items-center justify-center gap-1 py-3 border border-dashed border-blue-300 rounded-md cursor-pointer hover:bg-blue-100 transition-colors">
+                <UploadCloud className="w-6 h-6 text-blue-400" />
+                <span className="text-xs text-blue-600 font-medium">Pulsa aquí para adjuntar la factura</span>
+                <span className="text-[10px] text-blue-400">PDF, JPG o PNG</span>
+                <input
+                  type="file"
+                  accept="image/*,.pdf"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+              </label>
+            )}
           </div>
 
           <Button type="submit" disabled={loading} className="bg-red-600 hover:bg-red-700 text-white mt-2 w-full">
-            {loading ? "Guardando..." : "Registrar Gasto"}
+            {loading ? (file ? "Subiendo factura y guardando..." : "Guardando...") : (
+              <span className="flex items-center gap-2 justify-center">
+                <Plus className="w-4 h-4" />
+                Registrar Gasto{file ? " + Factura PDF" : ""}
+              </span>
+            )}
           </Button>
 
         </form>

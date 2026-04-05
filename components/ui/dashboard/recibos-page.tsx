@@ -1672,7 +1672,7 @@ ${appendErrors.join("\n")}`)
       </Dialog>
 
       <Dialog open={showGenerarForm} onOpenChange={setShowGenerarForm}>
-        <DialogContent className="w-[95vw] max-w-lg bg-white">
+        <DialogContent className="w-[95vw] max-w-2xl bg-white max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nuevo recibo — {selectedTenant?.full_name}</DialogTitle>
           </DialogHeader>

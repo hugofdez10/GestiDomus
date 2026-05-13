@@ -1,15 +1,18 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, usePathname } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/ui/dashboard/app-sidebar"
 import { LogOut } from "lucide-react"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
+  const pathname = usePathname()
   const [isAuthorized, setIsAuthorized] = useState(false)
+  const shouldReduceMotion = useReducedMotion()
 
   useEffect(() => {
     // 1. Función que comprueba si hay un usuario válido
@@ -66,9 +69,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           
           {/* BARRA SUPERIOR CON BOTÓN DE CERRAR SESIÓN */}
           <div className="p-4 border-b bg-white flex items-center justify-between sticky top-0 z-10 shadow-sm">
-            <div className="flex items-center">
+            <div className="flex items-center gap-3">
               <SidebarTrigger />
-              <span className="ml-4 font-bold text-slate-800 uppercase tracking-widest text-xs">
+              <span className="font-bold text-slate-800 uppercase tracking-widest text-xs">
                 GestiDomus Workspace
               </span>
             </div>
@@ -82,7 +85,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </button>
           </div>
 
-          {children}
+          <AnimatePresence mode="sync" initial={false}>
+            <motion.div
+              key={pathname}
+              initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 3 }}
+              animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+              exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -3 }}
+              transition={{ duration: shouldReduceMotion ? 0.01 : 0.1, ease: [0.22, 1, 0.36, 1] }}
+              style={{ willChange: shouldReduceMotion ? undefined : "opacity, transform" }}
+            >
+              {children}
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
     </SidebarProvider>

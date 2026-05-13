@@ -9,17 +9,32 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { UploadCloud, UserPlus } from "lucide-react"
 
+type PropertyOption = {
+  id: number
+  name: string
+}
+
+type TenantPayload = {
+  full_name: string
+  email: string | null
+  phone: string | null
+  document_url: string | null
+  property_id?: number
+}
+
 export function AddTenantForm({
   properties,
   triggerClassName = "",
+  onCreated,
 }: {
-  properties?: any[]
+  properties?: PropertyOption[]
   triggerClassName?: string
+  onCreated?: () => void | Promise<void>
 }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [file, setFile] = useState<File | null>(null)
-  const [propertiesList, setPropertiesList] = useState<any[]>(properties || [])
+  const [propertiesList, setPropertiesList] = useState<PropertyOption[]>(properties || [])
 
   const [formData, setFormData] = useState({
     full_name: "",
@@ -62,7 +77,7 @@ export function AddTenantForm({
       finalDocumentUrl = data.publicUrl
     }
 
-    const payload: any = {
+    const payload: TenantPayload = {
       full_name: formData.full_name,
       email: formData.email || null,
       phone: formData.phone || null,
@@ -80,7 +95,17 @@ export function AddTenantForm({
     } else {
       setOpen(false)
       setFile(null)
-      window.location.reload()
+      setFormData({
+        full_name: "",
+        email: "",
+        phone: "",
+        property_id: "none",
+      })
+      if (onCreated) {
+        await onCreated()
+      } else {
+        window.location.reload()
+      }
     }
 
     setLoading(false)

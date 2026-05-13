@@ -1,11 +1,11 @@
 "use client"
 
-import { AddTenantForm } from "@/components/ui/dashboard/add-tenant-form"
-import { TenantList } from "@/components/ui/dashboard/tenant-list"
-import { Users } from "lucide-react"
+import { AddPropertyForm } from "@/components/ui/dashboard/add-property-form"
+import { PropertyList } from "@/components/ui/dashboard/property-list"
+import { Building2 } from "lucide-react"
 import { useState } from "react"
 
-export default function TenantsPage() {
+export default function PropertiesPage() {
   const [refreshKey, setRefreshKey] = useState(0)
 
   return (
@@ -13,26 +13,23 @@ export default function TenantsPage() {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-12">
         <div>
           <h1 className="text-4xl font-black tracking-tighter text-slate-900 uppercase flex items-center gap-4">
-            <span className="p-2.5 bg-indigo-600 text-white rounded-2xl shadow-xl shadow-indigo-100">
-              <Users className="w-8 h-8" />
+            <span className="p-2.5 bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-100">
+              <Building2 className="w-8 h-8" />
             </span>
-            Gestión de Inquilinos
+            Gestión de Inmuebles
           </h1>
           <p className="text-slate-500 font-semibold mt-4 tracking-wide max-w-2xl">
-            Base de datos centralizada: supervisa contratos activos, perfiles de contacto y documentación legal de cada arrendatario.
+            Control centralizado de activos: consulta fichas técnicas, suministros y optimización de datos fiscales por cada unidad.
           </p>
         </div>
 
         <div className="flex justify-start lg:justify-end bg-white p-3 rounded-2xl border border-slate-100 shadow-sm ring-1 ring-black/5">
-          <AddTenantForm
-            onCreated={() => setRefreshKey((key) => key + 1)}
-            triggerClassName="shadow-none bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold px-6 py-2.5"
-          />
+          <AddPropertyForm onCreated={() => setRefreshKey((key) => key + 1)} />
         </div>
       </div>
 
       <div className="bg-white p-8 rounded-2xl border border-slate-100 shadow-lg shadow-slate-200/50">
-        <TenantList refreshKey={refreshKey} />
+        <PropertyList refreshKey={refreshKey} />
       </div>
     </div>
   )

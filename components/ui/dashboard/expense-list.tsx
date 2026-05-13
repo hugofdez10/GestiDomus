@@ -3,20 +3,38 @@
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { FileText, CheckCircle2, AlertCircle, Trash2, Filter, ExternalLink, Download } from "lucide-react"
+import { FileText, CheckCircle2, AlertCircle, Filter, ExternalLink, Download } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { EditExpenseForm } from "./edit-expense-form"
+import { exportTablePdf, formatDateEs, formatEuro } from "@/lib/pdf-export"
 
 const CONCEPTOS = [
   "Seguro", "Limpieza", "Comunidad", "Electricidad", "Gas", 
   "Agua", "IBI", "Internet", "Hipoteca", "Derrama", "Basura", "Otro"
 ]
 
+type ExpenseRow = {
+  id: number
+  category: string
+  amount: number
+  date: string
+  property_id: number | null
+  responsibility: string | null
+  is_tenant_paid: boolean | null
+  receipt_url: string | null
+  properties?: { name?: string | null } | null
+}
+
+type PropertyOption = {
+  id: number
+  name: string
+}
+
 export function ExpenseList({ year: globalYear }: { year: string }) {
-  const [expenses, setExpenses] = useState<any[]>([])
-  const [properties, setProperties] = useState<any[]>([])
+  const [expenses, setExpenses] = useState<ExpenseRow[]>([])
+  const [properties, setProperties] = useState<PropertyOption[]>([])
   
   const [localYear, setLocalYear] = useState(globalYear || new Date().getFullYear().toString())
   const [propertyFilter, setPropertyFilter] = useState("all")
@@ -35,8 +53,8 @@ export function ExpenseList({ year: globalYear }: { year: string }) {
       supabase.from('expenses').select('*, properties(name)').gte('date', startDate).lte('date', endDate).order('date', { ascending: false }),
       supabase.from('properties').select('id, name').order('name')
     ])
-    if (expRes.data) setExpenses(expRes.data)
-    if (propRes.data) setProperties(propRes.data)
+    if (expRes.data) setExpenses(expRes.data as ExpenseRow[])
+    if (propRes.data) setProperties(propRes.data as PropertyOption[])
   }
 
   useEffect(() => { fetchData() }, [localYear])
@@ -63,23 +81,54 @@ export function ExpenseList({ year: globalYear }: { year: string }) {
   })
 
   const isPdf = (url: string) => url.toLowerCase().includes('.pdf') || url.toLowerCase().includes('pdf')
+  const isImage = (url: string) => /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url)
+
+  function exportFilteredPdf() {
+    const total = filteredExpenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0)
+
+    exportTablePdf({
+      title: `Historial de gastos ${localYear}`,
+      subtitle: `Filtros: inmueble ${propertyFilter}, concepto ${conceptFilter}, responsabilidad ${respFilter}`,
+      fileName: `Gastos_${localYear}_${propertyFilter}_${conceptFilter}.pdf`,
+      rows: filteredExpenses,
+      summary: [
+        `Registros: ${filteredExpenses.length}`,
+        `Total gastos: ${formatEuro(total)}`,
+      ],
+      columns: [
+        { header: "Fecha", value: (exp) => formatDateEs(exp.date) },
+        { header: "Concepto", value: "category" },
+        { header: "Inmueble", value: (exp) => exp.properties?.name || "General" },
+        { header: "Importe", value: (exp) => formatEuro(exp.amount) },
+        { header: "Responsabilidad", value: (exp) => exp.responsibility === "tenant" ? "Inquilino" : "Propietario" },
+        { header: "Factura", value: (exp) => exp.receipt_url ? "Adjunta" : "Sin adjunto" },
+      ],
+    })
+  }
 
   return (
     <div className="bg-white p-6 rounded-xl border shadow-sm w-full">
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3">
-          <FileText className="w-6 h-6 text-red-500" />
-          <h2 className="text-lg font-bold text-slate-800">Historial de Gastos</h2>
-          <Select value={localYear} onValueChange={setLocalYear}>
-            <SelectTrigger className="w-[90px] h-8 font-black text-red-700 bg-red-50 border-red-200"><SelectValue /></SelectTrigger>
-            <SelectContent className="bg-white">
-              <SelectItem value="2025">2025</SelectItem>
-              <SelectItem value="2026">2026</SelectItem>
-              <SelectItem value="2027">2027</SelectItem>
-            </SelectContent>
-          </Select>
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6 pb-4 border-b">
+        <div>
+          <h2 className="text-xl font-black text-slate-900 flex items-center gap-3 tracking-tight uppercase">
+            <span className="text-2xl">💸</span>
+            Historial de Gastos
+          </h2>
+          <p className="text-sm text-slate-500 font-medium">Consulta y gestiona todos los gastos registrados en el sistema.</p>
         </div>
+
         <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-1.5 rounded-lg border shadow-sm">
+          <div className="flex items-center gap-2 mr-4 border-r pr-4">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Año</span>
+            <Select value={localYear} onValueChange={setLocalYear}>
+              <SelectTrigger className="w-[90px] h-8 font-black text-red-700 bg-red-50 border-red-200"><SelectValue /></SelectTrigger>
+              <SelectContent className="bg-white">
+                <SelectItem value="2025">2025</SelectItem>
+                <SelectItem value="2026">2026</SelectItem>
+                <SelectItem value="2027">2027</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <Filter className="w-4 h-4 text-slate-400 ml-2" />
           <Select value={propertyFilter} onValueChange={setPropertyFilter}>
             <SelectTrigger className="w-[140px] bg-white h-8 text-xs font-medium border-slate-200"><SelectValue placeholder="Inmueble" /></SelectTrigger>
@@ -104,6 +153,13 @@ export function ExpenseList({ year: globalYear }: { year: string }) {
               <SelectItem value="tenant">Gasto Inquilino</SelectItem>
             </SelectContent>
           </Select>
+          <button
+            type="button"
+            onClick={exportFilteredPdf}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-red-600 text-white text-xs font-bold hover:bg-red-700 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" /> PDF
+          </button>
         </div>
       </div>
       
@@ -200,12 +256,18 @@ export function ExpenseList({ year: globalYear }: { year: string }) {
                     style={{ height: '65vh', border: 'none' }}
                     title="Factura PDF"
                   />
-                ) : (
+                ) : isImage(viewReceiptUrl) ? (
                   <img
                     src={viewReceiptUrl}
                     alt="Factura"
                     className="max-w-full max-h-[65vh] object-contain p-2"
                   />
+                ) : (
+                  <div className="text-center text-slate-500 px-6">
+                    <FileText className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+                    <p className="font-semibold text-slate-700">Este documento no tiene vista previa en el navegador.</p>
+                    <p className="text-sm mt-1">Puedes abrirlo o descargarlo desde los botones inferiores.</p>
+                  </div>
                 )}
               </div>
               <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-white">

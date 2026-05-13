@@ -1,15 +1,33 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { CalendarDays } from "lucide-react"
+import { CalendarDays, Download } from "lucide-react"
+import { exportTablePdf, formatEuro } from "@/lib/pdf-export"
+import { motion, AnimatePresence } from "framer-motion"
 
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
 
+type TrackerProperty = {
+  id: number
+  name: string
+  price: number | null
+  status: string | null
+}
+
+type TrackerPayment = {
+  property_id: number
+  month: number
+  year: number
+  is_paid: boolean
+  amount?: number | null
+  paid_at?: string | null
+}
+
 // ─── Tooltip personalizado ────────────────────────────────────────────────────
 function PaymentTooltip({ payment, monthLabel }: {
-  payment: { is_paid: boolean; amount?: number; paid_at?: string } | null
+  payment: { is_paid: boolean; amount?: number | null; paid_at?: string | null } | null
   monthLabel: string
 }) {
   if (!payment || !payment.is_paid) {
@@ -44,7 +62,7 @@ function PaymentTooltip({ payment, monthLabel }: {
 
 // ─── Punto de pago ─────────────────────────────────────────────────────────────
 function PaymentDot({ payment, monthIndex, year, propertyId, onRefresh }: {
-  payment: { is_paid: boolean; amount?: number; paid_at?: string } | null
+  payment: { is_paid: boolean; amount?: number | null; paid_at?: string | null } | null
   monthIndex: number
   year: string
   propertyId: number
@@ -89,9 +107,19 @@ function PaymentDot({ payment, monthIndex, year, propertyId, onRefresh }: {
       onMouseLeave={() => setShowTip(false)}
     >
       {/* Tooltip al pasar el ratón */}
-      {showTip && (
-        <PaymentTooltip payment={payment} monthLabel={monthLabel} />
-      )}
+      <AnimatePresence>
+        {showTip && (
+          <motion.div
+            initial={{ opacity: 0, y: 5, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 5, scale: 0.95 }}
+            transition={{ duration: 0.1 }}
+            className="absolute z-50 left-1/2 -translate-x-1/2"
+          >
+            <PaymentTooltip payment={payment} monthLabel={monthLabel} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <button
         onClick={handleClick}
@@ -114,25 +142,30 @@ function PaymentDot({ payment, monthIndex, year, propertyId, onRefresh }: {
 export function OccupancyTracker({ year: globalYear }: { year: string }) {
   // El tracker tiene su PROPIO selector de año (independiente del global)
   const [localYear, setLocalYear] = useState(globalYear || new Date().getFullYear().toString())
-  const [properties, setProperties] = useState<any[]>([])
-  const [payments, setPayments] = useState<any[]>([])
+  const [properties, setProperties] = useState<TrackerProperty[]>([])
+  const [payments, setPayments] = useState<TrackerPayment[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
+  const [loading, setLoading] = useState(true)
 
   // Si cambia el año global, sincronizamos el local
   useEffect(() => { setLocalYear(globalYear) }, [globalYear])
 
-  async function fetchData() {
+  const fetchData = useCallback(async () => {
+    setLoading(true)
     const [propRes, payRes] = await Promise.all([
       supabase.from("properties").select("id, name, price, status").order("name"),
       supabase.from("rent_payments")
         .select("property_id, month, year, is_paid, amount, paid_at")
         .eq("year", parseInt(localYear)),
     ])
-    if (propRes.data) setProperties(propRes.data)
-    if (payRes.data)  setPayments(payRes.data)
-  }
+    if (propRes.data) setProperties(propRes.data as TrackerProperty[])
+    if (payRes.data)  setPayments(payRes.data as TrackerPayment[])
+    setLoading(false)
+  }, [localYear])
 
-  useEffect(() => { fetchData() }, [localYear, refreshKey])
+  useEffect(() => {
+    fetchData()
+  }, [fetchData, refreshKey])
 
   function getPayment(propertyId: number, month: number) {
     return payments.find(p => p.property_id === propertyId && p.month === month) ?? null
@@ -149,12 +182,40 @@ export function OccupancyTracker({ year: globalYear }: { year: string }) {
       .reduce((acc, p) => acc + (p.amount || 0), 0)
   }
 
+  function exportYearPdf() {
+    const rows = properties.map((prop) => ({
+      ...prop,
+      paidMonths: countPaidMonths(prop.id),
+      collected: totalCollected(prop.id),
+    }))
+    const totalCollectedYear = rows.reduce((sum, prop) => sum + Number(prop.collected || 0), 0)
+
+    exportTablePdf({
+      title: `Tracker de cobros ${localYear}`,
+      subtitle: "Resumen anual por inmueble",
+      fileName: `Tracker_Cobros_${localYear}.pdf`,
+      rows,
+      summary: [`Total cobrado: ${formatEuro(totalCollectedYear)}`],
+      columns: [
+        { header: "Inmueble", value: "name" },
+        { header: "Renta mensual", value: (prop) => formatEuro(prop.price) },
+        { header: "Meses cobrados", value: (prop) => `${prop.paidMonths}/12` },
+        { header: "Total cobrado", value: (prop) => formatEuro(prop.collected) },
+        { header: "Estado", value: (prop) => prop.status || "" },
+      ],
+    })
+  }
+
   return (
     <div className="bg-white p-6 rounded-xl border shadow-sm w-full overflow-x-auto">
-      <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-        <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-          <CalendarDays className="w-5 h-5 text-blue-600" /> Tracker de Cobros
-        </h2>
+      <div className="flex items-center justify-between gap-4 mb-6 flex-wrap pb-4 border-b">
+        <div>
+          <h2 className="text-xl font-black text-slate-900 flex items-center gap-3 tracking-tight uppercase">
+            <span className="text-2xl">🗓️</span>
+            Tracker de Cobros
+          </h2>
+          <p className="text-sm text-slate-500 font-medium">Visualización anual del estado de ocupación y cobros por inmueble.</p>
+        </div>
 
         {/* ─── SELECTOR DE AÑO PROPIO ─── */}
         <div className="flex items-center gap-2">
@@ -170,6 +231,13 @@ export function OccupancyTracker({ year: globalYear }: { year: string }) {
               <SelectItem value="2027">2027</SelectItem>
             </SelectContent>
           </Select>
+          <button
+            type="button"
+            onClick={exportYearPdf}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-blue-600 px-3 text-xs font-bold text-white hover:bg-blue-700"
+          >
+            <Download className="w-3.5 h-3.5" /> PDF
+          </button>
         </div>
       </div>
 
@@ -185,50 +253,71 @@ export function OccupancyTracker({ year: globalYear }: { year: string }) {
         </div>
 
         {/* Filas de inmuebles */}
-        {properties.map((prop) => {
-          const paid = countPaidMonths(prop.id)
-          const collected = totalCollected(prop.id)
+        <div className="relative">
+          <AnimatePresence mode="popLayout">
+            {loading ? (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="py-12 flex flex-col items-center justify-center gap-2 text-slate-400"
+              >
+                <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                <p className="text-[10px] font-bold uppercase tracking-widest">Consultando ocupación...</p>
+              </motion.div>
+            ) : (
+              properties.map((prop, idx) => {
+                const paid = countPaidMonths(prop.id)
+                const collected = totalCollected(prop.id)
 
-          return (
-            <div key={prop.id} className="grid items-center gap-1 py-2 border-t border-slate-100"
-              style={{ gridTemplateColumns: "200px repeat(12, 1fr) 80px 100px" }}>
-              {/* Nombre */}
-              <div className="pr-2">
-                <p className="text-sm font-bold text-slate-700 truncate">{prop.name}</p>
-                <p className="text-[10px] text-slate-400">
-                  {prop.price ? `${prop.price.toLocaleString("es-ES")} €/mes` : "Sin precio"}
-                </p>
-              </div>
+                return (
+                  <motion.div 
+                    key={prop.id} 
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.2, delay: idx * 0.02 }}
+                    className="grid items-center gap-1 py-2 border-t border-slate-100 hover:bg-slate-50/50 transition-colors"
+                    style={{ gridTemplateColumns: "200px repeat(12, 1fr) 80px 100px" }}
+                  >
+                    {/* Nombre */}
+                    <div className="pr-2">
+                      <p className="text-sm font-bold text-slate-700 truncate">{prop.name}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {prop.price ? `${prop.price.toLocaleString("es-ES")} €/mes` : "Sin precio"}
+                      </p>
+                    </div>
 
-              {/* 12 puntos */}
-              {Array.from({ length: 12 }, (_, i) => (
-                <div key={i} className="flex justify-center">
-                  <PaymentDot
-                    payment={getPayment(prop.id, i)}
-                    monthIndex={i}
-                    year={localYear}
-                    propertyId={prop.id}
-                    onRefresh={() => setRefreshKey(k => k + 1)}
-                  />
-                </div>
-              ))}
+                    {/* 12 puntos */}
+                    {Array.from({ length: 12 }, (_, i) => (
+                      <div key={i} className="flex justify-center">
+                        <PaymentDot
+                          payment={getPayment(prop.id, i)}
+                          monthIndex={i}
+                          year={localYear}
+                          propertyId={prop.id}
+                          onRefresh={() => setRefreshKey(k => k + 1)}
+                        />
+                      </div>
+                    ))}
 
-              {/* Meses cobrados */}
-              <div className="text-center">
-                <span className={`text-sm font-black ${paid === 12 ? "text-emerald-600" : paid >= 6 ? "text-amber-600" : "text-slate-500"}`}>
-                  {paid}/12
-                </span>
-              </div>
+                    {/* Meses cobrados */}
+                    <div className="text-center">
+                      <span className={`text-sm font-black ${paid === 12 ? "text-emerald-600" : paid >= 6 ? "text-amber-600" : "text-slate-500"}`}>
+                        {paid}/12
+                      </span>
+                    </div>
 
-              {/* Total cobrado en el año */}
-              <div className="text-center">
-                <span className="text-sm font-black text-emerald-700">
-                  {collected > 0 ? `${collected.toLocaleString("es-ES", { minimumFractionDigits: 0 })} €` : "—"}
-                </span>
-              </div>
-            </div>
-          )
-        })}
+                    {/* Total cobrado en el año */}
+                    <div className="text-center">
+                      <span className="text-sm font-black text-emerald-700">
+                        {collected > 0 ? `${collected.toLocaleString("es-ES", { minimumFractionDigits: 0 })} €` : "—"}
+                      </span>
+                    </div>
+                  </motion.div>
+                )
+              })
+            )}
+          </AnimatePresence>
+        </div>
       </div>
 
       <p className="text-[10px] text-slate-400 mt-4">

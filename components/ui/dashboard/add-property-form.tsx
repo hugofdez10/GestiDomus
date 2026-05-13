@@ -7,38 +7,92 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Plus, Home, Zap, Info, Landmark, Mail } from "lucide-react"
+import { Plus, Home, Zap, Info, Landmark, Mail, ShieldCheck } from "lucide-react"
 
-export function AddPropertyForm() {
+type SupplyKey = "electricity" | "gas" | "water" | "internet"
+type SupplyField = "company" | "contract"
+type SupplyFormKey = `supply_${SupplyKey}_${SupplyField}`
+
+type PropertyFormData = {
+  name: string
+  address: string
+  status: string
+  price: string
+  purchase_price: string
+  construction_value: string
+  payment_account_holder: string
+  payment_account_iban: string
+  sender_email: string
+  insurance_company: string
+  insurance_policy_number: string
+  cadastral_ref: string
+  area_m2: string
+  bedrooms: string
+  bathrooms: string
+  max_occupants: string
+} & Record<SupplyFormKey, string>
+
+type PropertyPayload = {
+  name: string
+  address: string | null
+  status: string
+  price: number | null
+  purchase_price: number | null
+  construction_value: number | null
+  payment_account_holder: string | null
+  payment_account_iban: string | null
+  sender_email: string | null
+  insurance_company: string | null
+  insurance_policy_number: string | null
+  cadastral_ref: string | null
+  area_m2: number | null
+  bedrooms: number | null
+  bathrooms: number | null
+  max_occupants: number | null
+  supplies: Record<SupplyKey, { company: string; contract: string }>
+}
+
+const initialPropertyFormData: PropertyFormData = {
+  name: "",
+  address: "",
+  status: "occupied",
+  price: "",
+  purchase_price: "",
+  construction_value: "",
+  payment_account_holder: "",
+  payment_account_iban: "",
+  sender_email: "",
+  insurance_company: "",
+  insurance_policy_number: "",
+  cadastral_ref: "",
+  area_m2: "",
+  bedrooms: "",
+  bathrooms: "",
+  max_occupants: "",
+  supply_electricity_company: "",
+  supply_electricity_contract: "",
+  supply_gas_company: "",
+  supply_gas_contract: "",
+  supply_water_company: "",
+  supply_water_contract: "",
+  supply_internet_company: "",
+  supply_internet_contract: "",
+}
+
+const supplyItems: Array<{ key: SupplyKey; label: string }> = [
+  { key: "electricity", label: "âš¡ Electricidad" },
+  { key: "gas", label: "ðŸ”¥ Gas" },
+  { key: "water", label: "ðŸ’§ Agua" },
+  { key: "internet", label: "ðŸ“¡ Internet" },
+]
+
+export function AddPropertyForm({ onCreated }: { onCreated?: () => void | Promise<void> }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
 
-  const [formData, setFormData] = useState({
-    name: "",
-    address: "",
-    status: "occupied",
-    price: "",
-    purchase_price: "",
-    construction_value: "",
-    payment_account_holder: "",
-    payment_account_iban: "",
-    sender_email: "",
-    cadastral_ref: "",
-    area_m2: "",
-    bedrooms: "",
-    bathrooms: "",
-    max_occupants: "",
-    supply_electricity_company: "",
-    supply_electricity_contract: "",
-    supply_gas_company: "",
-    supply_gas_contract: "",
-    supply_water_company: "",
-    supply_water_contract: "",
-    supply_internet_company: "",
-    supply_internet_contract: "",
-  })
+  const [formData, setFormData] = useState<PropertyFormData>(initialPropertyFormData)
 
-  function setField(key: string, value: string) {
+  function setField(key: keyof PropertyFormData, value: string) {
     setFormData((prev) => ({ ...prev, [key]: value }))
   }
 
@@ -51,14 +105,15 @@ export function AddPropertyForm() {
 
     setLoading(true)
 
-    const supplies = {
-      electricity: { company: formData.supply_electricity_company, contract: formData.supply_electricity_contract },
-      gas: { company: formData.supply_gas_company, contract: formData.supply_gas_contract },
-      water: { company: formData.supply_water_company, contract: formData.supply_water_contract },
-      internet: { company: formData.supply_internet_company, contract: formData.supply_internet_contract },
-    }
+    const supplies = supplyItems.reduce((acc, { key }) => {
+      acc[key] = {
+        company: formData[`supply_${key}_company` as SupplyFormKey],
+        contract: formData[`supply_${key}_contract` as SupplyFormKey],
+      }
+      return acc
+    }, {} as PropertyPayload["supplies"])
 
-    const payload: any = {
+    const payload: PropertyPayload = {
       name: formData.name,
       address: formData.address || null,
       status: formData.status,
@@ -68,6 +123,8 @@ export function AddPropertyForm() {
       payment_account_holder: formData.payment_account_holder || null,
       payment_account_iban: formData.payment_account_iban || null,
       sender_email: formData.sender_email || null,
+      insurance_company: formData.insurance_company || null,
+      insurance_policy_number: formData.insurance_policy_number || null,
       cadastral_ref: formData.cadastral_ref || null,
       area_m2: parseFloat(formData.area_m2) || null,
       bedrooms: parseInt(formData.bedrooms) || null,
@@ -81,7 +138,12 @@ export function AddPropertyForm() {
       alert("❌ Error al guardar: " + error.message)
     } else {
       setOpen(false)
-      window.location.reload()
+      setFormData(initialPropertyFormData)
+      if (onCreated) {
+        await onCreated()
+      } else {
+        window.location.reload()
+      }
     }
     setLoading(false)
   }
@@ -166,6 +228,22 @@ export function AddPropertyForm() {
             </div>
           </section>
 
+          <section className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+            <h3 className="text-xs font-black text-blue-700 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4" /> Seguro
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid gap-2">
+                <Label>Empresa</Label>
+                <Input placeholder="Nombre aseguradora" value={formData.insurance_company} onChange={(e) => setField("insurance_company", e.target.value)} className="bg-white" />
+              </div>
+              <div className="grid gap-2">
+                <Label>N. de poliza</Label>
+                <Input placeholder="Numero de poliza" value={formData.insurance_policy_number} onChange={(e) => setField("insurance_policy_number", e.target.value)} className="bg-white" />
+              </div>
+            </div>
+          </section>
+
           <section className="p-4 bg-slate-50 rounded-xl border">
             <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
               <Info className="w-4 h-4" /> Ficha técnica del inmueble
@@ -212,11 +290,11 @@ export function AddPropertyForm() {
                 </div>
                 <div className="grid gap-1">
                   <Label className="text-xs">Empresa</Label>
-                  <Input placeholder="Nombre empresa" value={(formData as any)[`supply_${key}_company`]} onChange={(e) => setField(`supply_${key}_company`, e.target.value)} className="bg-white text-sm" />
+                  <Input placeholder="Nombre empresa" value={formData[`supply_${key}_company` as SupplyFormKey]} onChange={(e) => setField(`supply_${key}_company` as SupplyFormKey, e.target.value)} className="bg-white text-sm" />
                 </div>
                 <div className="grid gap-1">
                   <Label className="text-xs">Nº Contrato / CUPS</Label>
-                  <Input placeholder="Número contrato" value={(formData as any)[`supply_${key}_contract`]} onChange={(e) => setField(`supply_${key}_contract`, e.target.value)} className="bg-white text-sm" />
+                  <Input placeholder="Número contrato" value={formData[`supply_${key}_contract` as SupplyFormKey]} onChange={(e) => setField(`supply_${key}_contract` as SupplyFormKey, e.target.value)} className="bg-white text-sm" />
                 </div>
               </div>
             ))}

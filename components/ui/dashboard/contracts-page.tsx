@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useDeferredValue, useEffect, useMemo, useState } from "react"
 import {
   Search,
   FileText,
@@ -15,6 +15,7 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { AddContractForm } from "@/components/ui/dashboard/add-contract-form"
 import { GenerateMonthlyInvoicesButton } from "@/components/ui/dashboard/generate-monthly-invoices-button"
 import { Button } from "@/components/ui/button"
@@ -24,6 +25,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { supabase } from "@/utils/supabase/client"
 import { deleteContract } from "@/lib/deleteContract"
+import { smoothListItemMotion } from "@/components/ui/dashboard/smooth-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 
 type ContractStatus =
   | "borrador"
@@ -62,6 +65,35 @@ type ContractRow = {
   contractEnd: string
   contractStatus: ContractStatus
   contractUrl?: string
+}
+
+type ContractRelation = {
+  name?: string | null
+}
+
+type TenantRelation = {
+  full_name?: string | null
+  email?: string | null
+  phone?: string | null
+}
+
+type ContractQueryRow = {
+  id: string | number
+  tenant_id?: number | null
+  contract_code?: string | null
+  deposit_status?: DepositDbStatus | null
+  deposit_amount?: number | string | null
+  deposit_returned_amount?: number | string | null
+  start_date?: string | null
+  end_date?: string | null
+  contract_status?: ContractDbStatus | null
+  document_path?: string | null
+  properties?: ContractRelation | ContractRelation[] | null
+  tenants?: TenantRelation | TenantRelation[] | null
+}
+
+function getErrorMessage(error: unknown, fallback = "Sin detalle") {
+  return error instanceof Error ? error.message : fallback
 }
 
 function normalizeContractStatusFromDb(value?: ContractDbStatus): ContractStatus {
@@ -126,25 +158,6 @@ function mapContractStatusToDb(status: ContractStatus): ContractDbStatus {
       return "renewed"
     default:
       return "draft"
-  }
-}
-
-function mapContractStatusToDbLegacy(status: ContractStatus): ContractDbStatus {
-  switch (status) {
-    case "borrador":
-      return "borrador"
-    case "pendiente_firma":
-      return "pendiente_firma"
-    case "activo":
-      return "activo"
-    case "vencido":
-      return "vencido"
-    case "rescindido":
-      return "rescindido"
-    case "prorrogado":
-      return "activo" // fallback legacy seguro
-    default:
-      return "borrador"
   }
 }
 
@@ -277,8 +290,83 @@ function getSingleRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value
 }
 
+function ContractTableSkeletonRows() {
+  return (
+    <>
+      {Array.from({ length: 6 }).map((_, index) => (
+        <TableRow key={index}>
+          <TableCell className="px-8 py-6">
+            <Skeleton className="h-4 w-44" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-4 w-36" />
+            <Skeleton className="mt-2 h-3 w-28" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-8 w-32 rounded-lg" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-4 w-24" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="mt-2 h-3 w-16" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-6 w-32 rounded-lg" />
+            <Skeleton className="mt-2 h-3 w-24" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-6 w-24 rounded-lg" />
+          </TableCell>
+          <TableCell className="px-8">
+            <div className="flex justify-end gap-2">
+              <Skeleton className="h-9 w-9 rounded-xl" />
+              <Skeleton className="h-9 w-9 rounded-xl" />
+              <Skeleton className="h-9 w-9 rounded-xl" />
+            </div>
+          </TableCell>
+        </TableRow>
+      ))}
+    </>
+  )
+}
+
+function ContractMobileSkeletonCards() {
+  return (
+    <>
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={index} className="rounded-xl border bg-white p-4 shadow-sm space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-44" />
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="h-3 w-40" />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-9 w-24" />
+              <Skeleton className="h-9 w-24" />
+              <Skeleton className="h-9 w-24" />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Skeleton className="h-6 w-24 rounded-lg" />
+            <Skeleton className="h-6 w-28 rounded-lg" />
+          </div>
+          <div className="space-y-2">
+            <Skeleton className="h-3 w-36" />
+            <Skeleton className="h-3 w-44" />
+            <Skeleton className="h-3 w-40" />
+          </div>
+        </div>
+      ))}
+    </>
+  )
+}
+
 export function ContractsPage() {
   const [contracts, setContracts] = useState<ContractRow[]>([])
+  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [contractStatusFilter, setContractStatusFilter] = useState<string>("all")
   const [depositStatusFilter, setDepositStatusFilter] = useState<string>("all")
@@ -292,8 +380,11 @@ export function ContractsPage() {
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [editDuration, setEditDuration] = useState<string>("0")
   const [editCustomDuration, setEditCustomDuration] = useState<string>("")
+  const deferredSearch = useDeferredValue(search)
+  const shouldReduceMotion = useReducedMotion()
 
-  async function loadContracts() {
+  async function loadContracts({ silent = false }: { silent?: boolean } = {}) {
+    if (!silent) setLoading(true)
     const { data, error } = await supabase
       .from("contracts")
       .select(`
@@ -315,10 +406,11 @@ export function ContractsPage() {
 
     if (error) {
       alert("Error cargando contratos: " + error.message)
+      if (!silent) setLoading(false)
       return
     }
 
-    const mapped: ContractRow[] = (data ?? []).map((c: any) => {
+    const mapped: ContractRow[] = ((data ?? []) as ContractQueryRow[]).map((c) => {
       const propertyRel = getSingleRelation(c.properties)
       const tenantRel = getSingleRelation(c.tenants)
 
@@ -330,17 +422,18 @@ export function ContractsPage() {
         email: tenantRel?.email ?? "",
         phone: tenantRel?.phone ?? "",
         contractName: c.contract_code ?? "",
-        depositStatus: normalizeDepositStatusFromDb(c.deposit_status),
+        depositStatus: normalizeDepositStatusFromDb(c.deposit_status ?? undefined),
         depositAmount: Number(c.deposit_amount ?? 0),
         depositReturnedAmount: Number(c.deposit_returned_amount ?? 0),
         contractStart: c.start_date ?? "",
         contractEnd: c.end_date ?? "",
-        contractStatus: normalizeContractStatusFromDb(c.contract_status),
+        contractStatus: normalizeContractStatusFromDb(c.contract_status ?? undefined),
         contractUrl: c.document_path ?? "",
       }
     })
 
     setContracts(mapped)
+    if (!silent) setLoading(false)
   }
 
   useEffect(() => {
@@ -350,7 +443,7 @@ export function ContractsPage() {
   const filteredContracts = useMemo(() => {
     return contracts
       .filter((item) => {
-        const q = search.trim().toLowerCase()
+        const q = deferredSearch.trim().toLowerCase()
 
         const matchSearch =
           !q ||
@@ -367,7 +460,7 @@ export function ContractsPage() {
         return matchSearch && matchContract && matchDeposit
       })
       .sort((a, b) => a.property.localeCompare(b.property, "es", { sensitivity: "base" }))
-  }, [contracts, search, contractStatusFilter, depositStatusFilter])
+  }, [contracts, deferredSearch, contractStatusFilter, depositStatusFilter])
 
   const activeCount = contracts.filter((c) => getAutoContractStatus(c) === "activo").length
   const pendingSignatureCount = contracts.filter((c) => c.contractStatus === "pendiente_firma").length
@@ -447,9 +540,14 @@ export function ContractsPage() {
       if (error) throw error
 
       setSelectedContract({ ...selectedContract, contractUrl: "" })
-      await loadContracts()
-    } catch (e: any) {
-      alert("Error al borrar el PDF: " + e.message)
+      setContracts((current) =>
+        current.map((contract) =>
+          contract.id === selectedContract.id ? { ...contract, contractUrl: "" } : contract
+        )
+      )
+      void loadContracts({ silent: true })
+    } catch (e) {
+      alert("Error al borrar el PDF: " + getErrorMessage(e))
     } finally {
       setDeletingPdf(false)
     }
@@ -465,10 +563,9 @@ export function ContractsPage() {
     try {
       setDeletingContractId(contract.id)
       await deleteContract(String(contract.id))
-      await loadContracts()
-      alert("Contrato eliminado correctamente.")
-    } catch (e: any) {
-      alert("Error al eliminar contrato: " + (e?.message || "Sin detalle"))
+      setContracts((current) => current.filter((item) => item.id !== contract.id))
+    } catch (e) {
+      alert("Error al eliminar contrato: " + getErrorMessage(e))
     } finally {
       setDeletingContractId(null)
     }
@@ -512,100 +609,126 @@ export function ContractsPage() {
       }
 
 
-const updatePayload = {
-  contract_code: selectedContract.contractName || null,
-  deposit_status: mapDepositStatusToDb(finalDepositStatus),
-  deposit_amount: Number(selectedContract.depositAmount || 0),
-  deposit_returned_amount: Number(selectedContract.depositReturnedAmount || 0),
-  start_date: selectedContract.contractStart || null,
-  end_date: selectedContract.contractEnd || null,
-  contract_status: mapContractStatusToDb(selectedContract.contractStatus),
-  document_path: finalDocumentUrl,
-}
+      const updatePayload = {
+        contract_code: selectedContract.contractName || null,
+        deposit_status: mapDepositStatusToDb(finalDepositStatus),
+        deposit_amount: Number(selectedContract.depositAmount || 0),
+        deposit_returned_amount: Number(selectedContract.depositReturnedAmount || 0),
+        start_date: selectedContract.contractStart || null,
+        end_date: selectedContract.contractEnd || null,
+        contract_status: mapContractStatusToDb(selectedContract.contractStatus),
+        document_path: finalDocumentUrl,
+      }
 
-const { error } = await supabase
-  .from("contracts")
-  .update(updatePayload)
-  .eq("id", selectedContract.id)
+      const { error } = await supabase
+        .from("contracts")
+        .update(updatePayload)
+        .eq("id", selectedContract.id)
 
-if (error) throw error
+      if (error) throw error
+      const updatedContract: ContractRow = {
+        ...selectedContract,
+        depositStatus: finalDepositStatus,
+        contractUrl: finalDocumentUrl || "",
+      }
+      setContracts((current) =>
+        current.map((contract) => (contract.id === selectedContract.id ? updatedContract : contract))
+      )
       setEditOpen(false)
       setSelectedContract(null)
       setPdfFile(null)
-      await loadContracts()
-    } catch (e: any) {
-      alert("Error al guardar: " + e.message)
+      void loadContracts({ silent: true })
+    } catch (e) {
+      alert("Error al guardar: " + getErrorMessage(e))
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="p-4 sm:p-8 bg-slate-50 min-h-screen w-full">
-      <div className="mb-8 space-y-4">
-        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+    <div className="p-4 sm:p-8 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-50 via-white to-slate-100 min-h-screen w-full max-w-[100vw] overflow-x-hidden">
+      <div className="mb-12 space-y-8">
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
           <div>
-            <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-900">
-              Contratos
+            <h1 className="text-4xl font-black tracking-tighter text-slate-900 uppercase flex items-center gap-4">
+              <span className="p-2.5 bg-blue-600 text-white rounded-2xl shadow-xl shadow-blue-100">
+                <FileSignature className="w-8 h-8" />
+              </span>
+              Gestión de Contratos
             </h1>
-            <p className="text-slate-500 font-medium mt-2">
-              Control de contratos, fianzas, recibos y documentos PDF.
+            <p className="text-slate-500 font-semibold mt-4 tracking-wide max-w-2xl">
+              Control exhaustivo de arrendamientos: supervisión de fianzas, vigencia legal y automatización de documentación PDF.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <AddContractForm onCreated={loadContracts} triggerClassName="shadow-sm" />
-            <GenerateMonthlyInvoicesButton onDone={loadContracts} />
+          <div className="flex flex-wrap items-center gap-3 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm ring-1 ring-black/5">
+            <AddContractForm onCreated={() => loadContracts({ silent: true })} triggerClassName="bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold px-6 py-2 shadow-none" />
+            <GenerateMonthlyInvoicesButton onDone={() => loadContracts({ silent: true })} />
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
           {[
             {
               label: "Activos",
               value: activeCount,
               icon: <FileSignature className="w-4 h-4" />,
-              color: "text-slate-900",
+              accent: "bg-emerald-500",
+              light: "bg-emerald-50",
+              text: "text-emerald-600",
             },
             {
               label: "Pend. firma",
               value: pendingSignatureCount,
-              icon: null,
-              color: "text-amber-600",
+              icon: <Clock className="w-4 h-4" />,
+              accent: "bg-amber-500",
+              light: "bg-amber-50",
+              text: "text-amber-600",
             },
             {
               label: "Prorrogados",
               value: prorrogadoCount,
               icon: <Clock className="w-4 h-4" />,
-              color: "text-purple-700",
+              accent: "bg-purple-500",
+              light: "bg-purple-50",
+              text: "text-purple-600",
             },
             {
               label: "Fianzas pend.",
               value: depositPendingCount,
               icon: <ShieldCheck className="w-4 h-4" />,
-              color: "text-red-600",
+              accent: "bg-rose-500",
+              light: "bg-rose-50",
+              text: "text-rose-600",
             },
           ].map((stat) => (
             <div
               key={stat.label}
-              className="bg-white border rounded-xl px-4 py-3 shadow-sm min-w-[130px]"
+              className="relative overflow-hidden bg-white border-none shadow-xl shadow-slate-200/50 rounded-2xl p-6 group transition-all hover:scale-[1.02]"
             >
-              <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">
-                {stat.icon}
+              <div className={`absolute top-0 left-0 w-1 h-full ${stat.accent}`} />
+              <div className="flex items-center gap-2 text-slate-400 text-[10px] font-black uppercase tracking-widest mb-3">
+                <span className={`p-1.5 ${stat.light} ${stat.text} rounded-lg`}>
+                  {stat.icon}
+                </span>
                 {stat.label}
               </div>
-              <p className={`text-2xl font-black ${stat.color}`}>{stat.value}</p>
+              <p className={`text-3xl font-black text-slate-900 tabular-nums tracking-tight`}>{stat.value}</p>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="bg-white border rounded-xl shadow-sm overflow-hidden">
-        <div className="p-5 sm:p-6 border-b">
-          <div className="flex flex-col lg:flex-row gap-3 lg:items-center lg:justify-between mb-4">
-            <h2 className="text-lg font-bold text-slate-800">Listado de contratos</h2>
+      <div className="bg-white border border-slate-100 rounded-2xl shadow-lg shadow-slate-200/50 overflow-hidden">
+        <div className="p-8 border-b border-slate-100">
+          <div className="flex flex-col lg:flex-row gap-4 lg:items-center lg:justify-between mb-8">
+            <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+              <span className="w-2 h-6 bg-blue-600 rounded-full" />
+              REGISTRO MAESTRO
+            </h2>
             <Button
-              variant="outline"
+              variant="ghost"
+              className="text-slate-400 hover:text-blue-600 font-bold text-xs uppercase tracking-widest"
               onClick={() => {
                 setSearch("")
                 setContractStatusFilter("all")
@@ -616,23 +739,23 @@ if (error) throw error
             </Button>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
             <div className="lg:col-span-6 relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar por inmueble, inquilino, email..."
-                className="pl-10 bg-slate-50"
+                className="pl-12 bg-slate-50/50 border-none h-12 rounded-xl ring-1 ring-slate-200 focus:ring-2 focus:ring-blue-500 transition-all"
               />
             </div>
 
             <div className="lg:col-span-3">
               <Select value={contractStatusFilter} onValueChange={setContractStatusFilter}>
-                <SelectTrigger className="bg-slate-50">
+                <SelectTrigger className="bg-slate-50/50 border-none h-12 rounded-xl ring-1 ring-slate-200">
                   <SelectValue placeholder="Estado contrato" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="rounded-xl border-slate-100 shadow-xl">
                   <SelectItem value="all">Todos los contratos</SelectItem>
                   <SelectItem value="borrador">Borrador</SelectItem>
                   <SelectItem value="pendiente_firma">Pendiente firma</SelectItem>
@@ -646,10 +769,10 @@ if (error) throw error
 
             <div className="lg:col-span-3">
               <Select value={depositStatusFilter} onValueChange={setDepositStatusFilter}>
-                <SelectTrigger className="bg-slate-50">
+                <SelectTrigger className="bg-slate-50/50 border-none h-12 rounded-xl ring-1 ring-slate-200">
                   <SelectValue placeholder="Estado fianza" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="rounded-xl border-slate-100 shadow-xl">
                   <SelectItem value="all">Todas las fianzas</SelectItem>
                   <SelectItem value="pendiente">Pendiente</SelectItem>
                   <SelectItem value="parcial">Devuelta parcial</SelectItem>
@@ -664,178 +787,192 @@ if (error) throw error
         <div className="hidden lg:block">
           <Table>
             <TableHeader>
-              <TableRow className="bg-slate-50">
-                <TableHead>Inmueble</TableHead>
-                <TableHead>Inquilino</TableHead>
-                <TableHead>Contrato</TableHead>
-                <TableHead>Inicio</TableHead>
-                <TableHead>Fin / Duración</TableHead>
-                <TableHead>Fianza</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
+              <TableRow className="bg-slate-50/30 border-none">
+                <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-400 px-8 py-5">Inmueble</TableHead>
+                <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-400">Inquilino</TableHead>
+                <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-400">Contrato</TableHead>
+                <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-400">Inicio</TableHead>
+                <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-400">Fin / Duración</TableHead>
+                <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-400">Fianza</TableHead>
+                <TableHead className="font-black text-[10px] uppercase tracking-widest text-slate-400">Estado</TableHead>
+                <TableHead className="text-right px-8 font-black text-[10px] uppercase tracking-widest text-slate-400">Acciones</TableHead>
               </TableRow>
             </TableHeader>
 
             <TableBody>
-              {filteredContracts.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="py-12 text-center text-slate-500">
-                    No hay contratos con los filtros actuales.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredContracts.map((contract) => {
-                  const effectiveStatus = getAutoContractStatus(contract)
-                  const duration = calcDurationMonths(contract.contractStart, contract.contractEnd)
+              <AnimatePresence initial={false}>
+                {loading ? (
+                  <ContractTableSkeletonRows />
+                ) : filteredContracts.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="py-20 text-center text-slate-400 font-semibold italic">
+                      No se han encontrado registros maestros.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredContracts.map((contract, index) => {
+                    const effectiveStatus = getAutoContractStatus(contract)
+                    const duration = calcDurationMonths(contract.contractStart, contract.contractEnd)
 
-                  return (
-                    <TableRow key={contract.id} className="hover:bg-slate-50/60">
-                      <TableCell>
-                        <p className="font-semibold text-slate-800">{contract.property}</p>
-                      </TableCell>
+                    return (
+                      <motion.tr
+                        key={contract.id}
+                        {...smoothListItemMotion(index, shouldReduceMotion ?? false)}
+                        className="hover:bg-blue-50/30 transition-colors duration-200 ease-out border-b border-slate-50"
+                      >
+                        <TableCell className="px-8 py-6">
+                          <p className="font-black text-slate-900 tracking-tight">{contract.property}</p>
+                        </TableCell>
 
-                      <TableCell>
-                        <p className="font-semibold text-slate-700">{contract.tenant}</p>
-                        <p className="text-xs text-slate-400">{contract.phone || "—"}</p>
-                        {contract.email ? (
-                          <a
-                            href={`mailto:${contract.email}`}
-                            className="text-xs text-blue-500 hover:underline"
-                          >
-                            {contract.email}
-                          </a>
-                        ) : (
-                          <p className="text-xs text-slate-300 italic">Sin email</p>
-                        )}
-                      </TableCell>
+                        <TableCell>
+                          <p className="font-bold text-slate-700">{contract.tenant}</p>
+                          <div className="flex gap-2 mt-1">
+                            {contract.email && (
+                              <a href={`mailto:${contract.email}`} className="text-[10px] font-black text-blue-500 hover:text-blue-700 uppercase tracking-tighter">Email</a>
+                            )}
+                            <span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">{contract.phone || "—"}</span>
+                          </div>
+                        </TableCell>
 
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-blue-600" />
-                          <span className="font-medium text-slate-700">
-                            {contract.contractName || "Sin código"}
-                          </span>
-                        </div>
-                      </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
+                              <FileText className="w-3.5 h-3.5" />
+                            </div>
+                            <span className="font-bold text-slate-700 tabular-nums">
+                              {contract.contractName || "DRAFT-00"}
+                            </span>
+                          </div>
+                        </TableCell>
 
-                      <TableCell className="text-sm text-slate-600">
-                        {formatDate(contract.contractStart)}
-                      </TableCell>
+                        <TableCell className="text-sm font-semibold text-slate-600 tabular-nums">
+                          {formatDate(contract.contractStart)}
+                        </TableCell>
 
-                      <TableCell>
-                        <p className="text-sm text-slate-600">{formatDate(contract.contractEnd)}</p>
-                        {duration !== null && (
-                          <p className="text-[10px] text-slate-400 mt-0.5">{duration} meses</p>
-                        )}
-                      </TableCell>
+                        <TableCell>
+                          <p className="text-sm font-semibold text-slate-600 tabular-nums">{formatDate(contract.contractEnd)}</p>
+                          {duration !== null && (
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">{duration} MESES</span>
+                          )}
+                        </TableCell>
 
-                      <TableCell>
-                        <Badge variant="outline" className={getDepositStatusClasses(contract.depositStatus)}>
-                          {getDepositStatusLabel(contract.depositStatus)}
-                        </Badge>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {formatCurrency(contract.depositReturnedAmount)} / {formatCurrency(contract.depositAmount)}
-                        </p>
-                      </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`rounded-lg border-none font-black text-[10px] uppercase tracking-widest px-2.5 py-1 ${getDepositStatusClasses(contract.depositStatus)}`}>
+                            {getDepositStatusLabel(contract.depositStatus)}
+                          </Badge>
+                          <p className="text-[10px] font-black text-slate-400 mt-1.5 tabular-nums">
+                            {formatCurrency(contract.depositReturnedAmount)} / {formatCurrency(contract.depositAmount)}
+                          </p>
+                        </TableCell>
 
-                      <TableCell>
-                        <Badge variant="outline" className={getContractStatusClasses(effectiveStatus)}>
-                          {getContractStatusLabel(effectiveStatus)}
-                        </Badge>
-                      </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`rounded-lg border-none font-black text-[10px] uppercase tracking-widest px-2.5 py-1 ${getContractStatusClasses(effectiveStatus)}`}>
+                            {getContractStatusLabel(effectiveStatus)}
+                          </Badge>
+                        </TableCell>
 
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2 flex-wrap">
-                          <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
-                            <Pencil className="w-4 h-4" /> Editar
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openPreview(contract.contractUrl)}
-                            disabled={!contract.contractUrl}
-                          >
-                            <Eye className="w-4 h-4" /> PDF
-                          </Button>
-                          <Button
-                            size="sm"
-                            onClick={() => handleDeleteContract(contract)}
-                            disabled={deletingContractId === contract.id}
-                            className="bg-red-600 hover:bg-red-700 text-white"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            {deletingContractId === contract.id ? "Eliminando..." : "Eliminar"}
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })
-              )}
+                        <TableCell className="text-right px-8">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="icon" onClick={() => openEditModal(contract)} className="hover:bg-blue-50 hover:text-blue-600 rounded-xl">
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openPreview(contract.contractUrl)}
+                              disabled={!contract.contractUrl}
+                              className="hover:bg-indigo-50 hover:text-indigo-600 rounded-xl"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteContract(contract)}
+                              disabled={deletingContractId === contract.id}
+                              className="hover:bg-red-50 hover:text-red-600 rounded-xl"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </motion.tr>
+                    )
+                  })
+                )}
+              </AnimatePresence>
             </TableBody>
           </Table>
         </div>
 
         <div className="lg:hidden p-4 space-y-4">
-          {filteredContracts.length === 0 ? (
+          {loading ? (
+            <ContractMobileSkeletonCards />
+          ) : filteredContracts.length === 0 ? (
             <div className="rounded-xl border bg-white p-6 text-center text-slate-500 shadow-sm">
               No hay contratos con los filtros actuales.
             </div>
           ) : (
-            filteredContracts.map((contract) => {
-              const effectiveStatus = getAutoContractStatus(contract)
-              const duration = calcDurationMonths(contract.contractStart, contract.contractEnd)
+            <AnimatePresence initial={false}>
+              {filteredContracts.map((contract, index) => {
+                const effectiveStatus = getAutoContractStatus(contract)
+                const duration = calcDurationMonths(contract.contractStart, contract.contractEnd)
 
-              return (
-                <div key={contract.id} className="rounded-xl border bg-white p-4 shadow-sm space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-bold text-slate-900">{contract.property}</p>
-                      <p className="text-sm text-slate-600">{contract.tenant}</p>
-                      {contract.email && <p className="text-xs text-blue-500">{contract.email}</p>}
+                return (
+                  <motion.div
+                    key={contract.id}
+                    {...smoothListItemMotion(index, shouldReduceMotion ?? false)}
+                    className="rounded-xl border bg-white p-4 shadow-sm space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-slate-900">{contract.property}</p>
+                        <p className="text-sm text-slate-600">{contract.tenant}</p>
+                        {contract.email && <p className="text-xs text-blue-500">{contract.email}</p>}
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
+                          <Pencil className="w-4 h-4" /> Editar
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openPreview(contract.contractUrl)}
+                          disabled={!contract.contractUrl}
+                        >
+                          <Eye className="w-4 h-4" /> PDF
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => handleDeleteContract(contract)}
+                          disabled={deletingContractId === contract.id}
+                          className="bg-red-600 hover:bg-red-700 text-white"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          {deletingContractId === contract.id ? "Eliminando..." : "Eliminar"}
+                        </Button>
+                      </div>
                     </div>
 
-                    <div className="flex flex-col gap-2">
-                      <Button variant="outline" size="sm" onClick={() => openEditModal(contract)}>
-                        <Pencil className="w-4 h-4" /> Editar
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openPreview(contract.contractUrl)}
-                        disabled={!contract.contractUrl}
-                      >
-                        <Eye className="w-4 h-4" /> PDF
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => handleDeleteContract(contract)}
-                        disabled={deletingContractId === contract.id}
-                        className="bg-red-600 hover:bg-red-700 text-white"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        {deletingContractId === contract.id ? "Eliminando..." : "Eliminar"}
-                      </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline" className={getContractStatusClasses(effectiveStatus)}>
+                        {getContractStatusLabel(effectiveStatus)}
+                      </Badge>
+                      <Badge variant="outline" className={getDepositStatusClasses(contract.depositStatus)}>
+                        {getDepositStatusLabel(contract.depositStatus)}
+                      </Badge>
                     </div>
-                  </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant="outline" className={getContractStatusClasses(effectiveStatus)}>
-                      {getContractStatusLabel(effectiveStatus)}
-                    </Badge>
-                    <Badge variant="outline" className={getDepositStatusClasses(contract.depositStatus)}>
-                      {getDepositStatusLabel(contract.depositStatus)}
-                    </Badge>
-                  </div>
-
-                  <div className="text-sm text-slate-600 space-y-1">
-                    <p><strong>Inicio:</strong> {formatDate(contract.contractStart)}</p>
-                    <p><strong>Fin:</strong> {formatDate(contract.contractEnd)}{duration !== null ? ` (${duration} meses)` : ""}</p>
-                    <p><strong>Fianza:</strong> {formatCurrency(contract.depositReturnedAmount)} / {formatCurrency(contract.depositAmount)}</p>
-                  </div>
-                </div>
-              )
-            })
+                    <div className="text-sm text-slate-600 space-y-1">
+                      <p><strong>Inicio:</strong> {formatDate(contract.contractStart)}</p>
+                      <p><strong>Fin:</strong> {formatDate(contract.contractEnd)}{duration !== null ? ` (${duration} meses)` : ""}</p>
+                      <p><strong>Fianza:</strong> {formatCurrency(contract.depositReturnedAmount)} / {formatCurrency(contract.depositAmount)}</p>
+                    </div>
+                  </motion.div>
+                )
+              })}
+            </AnimatePresence>
           )}
         </div>
       </div>

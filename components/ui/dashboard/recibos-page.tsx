@@ -9,6 +9,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
+  getActiveContractForTenant,
+  getContractDisplayStatus,
+  getMostRecentContractForTenant,
+  isContractInForce,
+  type ContractDisplayStatus,
+} from "@/lib/contracts"
+import {
   Receipt,
   Send,
   Eye,
@@ -23,7 +30,9 @@ import {
   Trash2,
   Wifi,
   ExternalLink,
+  Download,
 } from "lucide-react"
+import { exportTablePdf, formatDateEs, formatEuro } from "@/lib/pdf-export"
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -41,7 +50,7 @@ type Contract = {
   monthly_rent: number
   contract_status: string
   start_date: string
-  end_date: string
+  end_date: string | null
   properties?: {
     name: string
     address: string | null
@@ -103,6 +112,7 @@ type Expense = {
 
 type TenantWithContract = Tenant & {
   contract: Contract | null
+  contractDisplayStatus: ContractDisplayStatus
   invoices: Invoice[]
   pendingTotal: number
 }
@@ -295,7 +305,7 @@ export function RecibosPage() {
       supabase
         .from("contracts")
         .select("id, property_id, tenant_id, monthly_rent, contract_status, start_date, end_date, properties(name, address, payment_account_holder, payment_account_iban, sender_email)")
-        .in("contract_status", ["active", "renewed", "expired", "activo", "prorrogado", "vencido"]),
+        .order("start_date", { ascending: false }),
       supabase
         .from("invoices")
         .select(`
@@ -346,12 +356,18 @@ export function RecibosPage() {
     const invoices: Invoice[] = invoicesRes.data || []
 
     const merged: TenantWithContract[] = tenants.map((t) => {
-      const contract = contracts.find((c) => c.tenant_id === t.id) || null
+      const contract =
+        getActiveContractForTenant(t.id, contracts) ||
+        getMostRecentContractForTenant(t.id, contracts)
       const tenantInvoices = invoices.filter((i) => i.tenant_id === t.id)
       const pendingTotal = tenantInvoices
         .filter((i) => i.status === "pending")
         .reduce((s, i) => s + totalInvoice(i), 0)
-      return { ...t, contract, invoices: tenantInvoices, pendingTotal }
+      return { ...t, contract, contractDisplayStatus: getContractDisplayStatus(contract), invoices: tenantInvoices, pendingTotal }
+    }).sort((a, b) => {
+      const aRank = a.contractDisplayStatus === "vigente" ? 0 : a.contractDisplayStatus === "finalizado" ? 1 : 2
+      const bRank = b.contractDisplayStatus === "vigente" ? 0 : b.contractDisplayStatus === "finalizado" ? 1 : 2
+      return aRank - bRank || a.full_name.localeCompare(b.full_name, "es", { sensitivity: "base" })
     })
 
     setData(merged)
@@ -440,8 +456,7 @@ export function RecibosPage() {
     (t.email || "").toLowerCase().includes(search.toLowerCase())
   )
 
-  const hasActiveContract = (t: TenantWithContract) =>
-    t.contract && ["active", "renewed", "activo", "prorrogado"].includes(t.contract.contract_status)
+  const hasActiveContract = (t: TenantWithContract) => isContractInForce(t.contract)
 
   function openGenerarRecibo(tenant: TenantWithContract) {
     setSelectedTenant(tenant)
@@ -1184,6 +1199,55 @@ ${appendErrors.join("\n")}`)
   const totalRecibos = data.reduce((s, t) => s + t.invoices.length, 0)
   const totalPendienteCount = data.reduce((s, t) => s + t.invoices.filter((i) => i.status === "pending").length, 0)
 
+  function exportInvoicesPdf() {
+    const rows = filtered.flatMap((tenant) =>
+      tenant.invoices.map((invoice) => ({
+        tenant: tenant.full_name,
+        property: tenant.contract?.properties?.name || tenant.contract?.properties?.address || "",
+        period: mesAno(invoice),
+        dueDate: invoice.due_date,
+        rent: invoice.amount,
+        utilities: (invoice.gas || 0) + (invoice.luz || 0) + (invoice.agua || 0) + (invoice.internet || 0),
+        total: totalInvoice(invoice),
+        status: invoice.status === "paid" ? "Pagado" : "Pendiente",
+        sentAt: invoice.sent_at,
+        documents: [
+          getInvoiceAttachments(invoice).some((item) => !!item.receiptUrl) ? "Justificantes" : "",
+          invoice.invoice_pdf_url ? "PDF recibo" : "",
+          invoice.combined_pdf_url ? "PDF combinado" : "",
+        ].filter(Boolean).join(" + ") || "Sin adjuntos",
+      }))
+    )
+
+    const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0)
+    const pending = rows
+      .filter((row) => row.status === "Pendiente")
+      .reduce((sum, row) => sum + Number(row.total || 0), 0)
+
+    exportTablePdf({
+      title: "Recibos de alquiler",
+      subtitle: search ? `Filtro de busqueda: ${search}` : "Todos los recibos visibles",
+      fileName: `Recibos_Alquiler_${new Date().getFullYear()}.pdf`,
+      rows,
+      summary: [
+        `Recibos exportados: ${rows.length}`,
+        `Total: ${formatEuro(total)}`,
+        `Pendiente: ${formatEuro(pending)}`,
+      ],
+      columns: [
+        { header: "Inquilino", value: "tenant" },
+        { header: "Inmueble", value: "property" },
+        { header: "Periodo", value: "period" },
+        { header: "Vence", value: (row) => formatDateEs(row.dueDate) },
+        { header: "Alquiler", value: (row) => formatEuro(row.rent) },
+        { header: "Suministros", value: (row) => formatEuro(row.utilities) },
+        { header: "Total", value: (row) => formatEuro(row.total) },
+        { header: "Estado", value: "status" },
+        { header: "Adjuntos", value: "documents" },
+      ],
+    })
+  }
+
   return (
     <div className="p-4 sm:p-8 bg-slate-50 min-h-screen w-full max-w-[100vw] overflow-x-hidden">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
@@ -1194,6 +1258,14 @@ ${appendErrors.join("\n")}`)
           </h1>
           <p className="text-slate-500 mt-2">Genera, consulta y envía los recibos mensuales de cada inquilino.</p>
         </div>
+
+        <Button
+          variant="outline"
+          onClick={exportInvoicesPdf}
+          className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50 gap-2"
+        >
+          <Download className="w-4 h-4" /> Exportar PDF
+        </Button>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
@@ -1226,9 +1298,18 @@ ${appendErrors.join("\n")}`)
             const property = tenant.contract?.properties
 
             return (
-              <div key={tenant.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div
+                key={tenant.id}
+                className={`rounded-xl border shadow-sm overflow-hidden ${
+                  tenant.contractDisplayStatus === "vigente"
+                    ? "bg-emerald-50/40 border-emerald-100"
+                    : tenant.contractDisplayStatus === "finalizado"
+                      ? "bg-slate-50 border-slate-200"
+                      : "bg-rose-50/30 border-rose-100"
+                }`}
+              >
                 <div
-                  className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 cursor-pointer hover:bg-slate-50 transition-colors"
+                  className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 cursor-pointer hover:bg-white/60 transition-colors"
                   onClick={() => toggleExpand(tenant.id)}
                 >
                   <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm shrink-0">
@@ -1238,12 +1319,14 @@ ${appendErrors.join("\n")}`)
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-bold text-slate-800">{tenant.full_name}</p>
-                      {isActive ? (
-                        <Badge className="bg-green-100 text-green-800 text-[10px]">Activo</Badge>
+                      {tenant.contractDisplayStatus === "vigente" ? (
+                        <Badge className="bg-green-100 text-green-800 text-[10px]">vigente</Badge>
+                      ) : tenant.contractDisplayStatus === "finalizado" ? (
+                        <Badge className="bg-slate-100 text-slate-600 text-[10px]">finalizado</Badge>
                       ) : tenant.contract ? (
                         <Badge className="bg-slate-100 text-slate-600 text-[10px]">{tenant.contract.contract_status}</Badge>
                       ) : (
-                        <Badge className="bg-slate-100 text-slate-400 text-[10px]">Sin contrato</Badge>
+                        <Badge className="bg-rose-50 text-rose-600 border border-rose-100 text-[10px]">sin contrato vigente</Badge>
                       )}
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5 truncate">
@@ -1306,9 +1389,13 @@ ${appendErrors.join("\n")}`)
                         <TableBody>
                           {tenant.invoices.map((inv) => {
                             const attachmentCount = getInvoiceAttachments(inv).filter((item) => !!item.receiptUrl).length
+                            const hasAttachedInvoice = attachmentCount > 0 || !!inv.invoice_pdf_url || !!inv.combined_pdf_url
 
                             return (
-                              <TableRow key={inv.id} className="hover:bg-slate-50">
+                              <TableRow
+                                key={inv.id}
+                                className={hasAttachedInvoice ? "bg-blue-50/60 hover:bg-blue-100/70 border-l-4 border-l-blue-500" : "hover:bg-slate-50"}
+                              >
                                 <TableCell>
                                   <p className="font-semibold text-slate-700">{mesAno(inv)}</p>
                                   <p className="text-xs text-slate-400">Vence: {fmtFecha(inv.due_date)}</p>
@@ -1334,6 +1421,7 @@ ${appendErrors.join("\n")}`)
                                   {inv.sent_at && <p className="text-[10px] text-slate-400 mt-0.5">Enviado {fmtFecha(inv.sent_at)}</p>}
                                   {attachmentCount > 0 && <p className="text-[10px] text-blue-600 mt-0.5">📎 {attachmentCount} justificante(s)</p>}
                                   {inv.invoice_pdf_url && <p className="text-[10px] text-indigo-500 mt-0.5">📎 PDF adjunto</p>}
+                                  {hasAttachedInvoice && <p className="text-[10px] font-bold text-blue-700 mt-0.5">Documentación lista</p>}
                                 </TableCell>
                                 <TableCell className="text-right">
                                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Ver recibo"
@@ -1726,7 +1814,19 @@ ${appendErrors.join("\n")}`)
                     <Select value={selectedGasExpenseId ? String(selectedGasExpenseId) : undefined} onValueChange={(val) => setArchivedExpense("gas", val)}>
                       <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Usar factura archivada de Gas" /></SelectTrigger>
                       <SelectContent className="bg-white">
-                        {expensesGas.map((exp) => <SelectItem key={exp.id} value={String(exp.id)}>{fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}</SelectItem>)}
+                        {expensesGas.map((exp) => {
+                          const isUsed = data.some(t => t.invoices.some(inv => inv.gas_expense_id === exp.id))
+                          return (
+                            <SelectItem 
+                              key={exp.id} 
+                              value={String(exp.id)}
+                              className={isUsed ? "bg-red-50 text-red-700 focus:bg-red-100 focus:text-red-800" : ""}
+                            >
+                              {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
+                              {isUsed && " (Ya usado)"}
+                            </SelectItem>
+                          )
+                        })}
                       </SelectContent>
                     </Select>
                     {selectedGasExpenseId && <p className="text-[11px] text-blue-600">Este gasto quedará vinculado al recibo.</p>}
@@ -1753,7 +1853,19 @@ ${appendErrors.join("\n")}`)
                     <Select value={selectedLuzExpenseId ? String(selectedLuzExpenseId) : undefined} onValueChange={(val) => setArchivedExpense("luz", val)}>
                       <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Usar factura archivada de Luz" /></SelectTrigger>
                       <SelectContent className="bg-white">
-                        {expensesLuz.map((exp) => <SelectItem key={exp.id} value={String(exp.id)}>{fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}</SelectItem>)}
+                        {expensesLuz.map((exp) => {
+                          const isUsed = data.some(t => t.invoices.some(inv => inv.luz_expense_id === exp.id))
+                          return (
+                            <SelectItem 
+                              key={exp.id} 
+                              value={String(exp.id)}
+                              className={isUsed ? "bg-red-50 text-red-700 focus:bg-red-100 focus:text-red-800" : ""}
+                            >
+                              {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
+                              {isUsed && " (Ya usado)"}
+                            </SelectItem>
+                          )
+                        })}
                       </SelectContent>
                     </Select>
                     {selectedLuzExpenseId && <p className="text-[11px] text-blue-600">Este gasto quedará vinculado al recibo.</p>}
@@ -1779,7 +1891,19 @@ ${appendErrors.join("\n")}`)
                     <Select value={selectedAguaExpenseId ? String(selectedAguaExpenseId) : undefined} onValueChange={(val) => setArchivedExpense("agua", val)}>
                       <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Usar factura archivada de Agua" /></SelectTrigger>
                       <SelectContent className="bg-white">
-                        {expensesAgua.map((exp) => <SelectItem key={exp.id} value={String(exp.id)}>{fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}</SelectItem>)}
+                        {expensesAgua.map((exp) => {
+                          const isUsed = data.some(t => t.invoices.some(inv => inv.agua_expense_id === exp.id))
+                          return (
+                            <SelectItem 
+                              key={exp.id} 
+                              value={String(exp.id)}
+                              className={isUsed ? "bg-red-50 text-red-700 focus:bg-red-100 focus:text-red-800" : ""}
+                            >
+                              {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
+                              {isUsed && " (Ya usado)"}
+                            </SelectItem>
+                          )
+                        })}
                       </SelectContent>
                     </Select>
                     {selectedAguaExpenseId && <p className="text-[11px] text-blue-600">Este gasto quedará vinculado al recibo.</p>}
@@ -1807,7 +1931,19 @@ ${appendErrors.join("\n")}`)
                     <Select value={selectedInternetExpenseId ? String(selectedInternetExpenseId) : undefined} onValueChange={(val) => setArchivedExpense("internet", val)}>
                       <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Usar factura archivada de Internet" /></SelectTrigger>
                       <SelectContent className="bg-white">
-                        {expensesInternet.map((exp) => <SelectItem key={exp.id} value={String(exp.id)}>{fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}</SelectItem>)}
+                        {expensesInternet.map((exp) => {
+                          const isUsed = data.some(t => t.invoices.some(inv => inv.internet_expense_id === exp.id))
+                          return (
+                            <SelectItem 
+                              key={exp.id} 
+                              value={String(exp.id)}
+                              className={isUsed ? "bg-red-50 text-red-700 focus:bg-red-100 focus:text-red-800" : ""}
+                            >
+                              {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
+                              {isUsed && " (Ya usado)"}
+                            </SelectItem>
+                          )
+                        })}
                       </SelectContent>
                     </Select>
                     {selectedInternetExpenseId && <p className="text-[11px] text-blue-600">Este gasto quedará vinculado al recibo.</p>}

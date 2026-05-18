@@ -2,43 +2,70 @@
 
 import { Button } from "@/components/ui/button"
 import { supabase } from "@/lib/supabase"
-import * as XLSX from 'xlsx'
+
+type ReportProperty = {
+  name?: string | null
+  price?: number | null
+  status?: string | null
+  tenants?: Array<{ full_name?: string | null }> | null
+  expenses?: Array<{ amount?: number | null }> | null
+}
+
+function escapeCsv(value: string | number | null | undefined) {
+  const text = String(value ?? "")
+  return `"${text.replace(/"/g, '""')}"`
+}
+
+function downloadCsv(fileName: string, rows: Array<Record<string, string | number>>) {
+  if (rows.length === 0) return
+
+  const headers = Object.keys(rows[0])
+  const csv = [
+    headers.map(escapeCsv).join(","),
+    ...rows.map((row) => headers.map((header) => escapeCsv(row[header])).join(",")),
+  ].join("\n")
+
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = fileName
+  link.click()
+  URL.revokeObjectURL(url)
+}
 
 export function ExportReport() {
-  async function downloadExcel() {
-    // 1. Traemos toda la foto actual de la base de datos
+  async function downloadReport() {
     const { data: properties } = await supabase
-      .from('properties')
-      .select('*, tenants(full_name), expenses(*)')
+      .from("properties")
+      .select("*, tenants(full_name), expenses(*)")
 
     if (!properties) return
 
-    // 2. Formateamos los datos para que el gestor los entienda
-    const reportData = properties.map(p => ({
-      Inmueble: p.name,
-      Inquilino: p.tenants?.[0]?.full_name || 'Vacante',
-      'Ingresos Brutos': p.price,
-      'Gastos Totales': p.expenses?.reduce((acc: number, curr: any) => acc + curr.amount, 0) || 0,
-      'Beneficio Neto': p.price - (p.expenses?.reduce((acc: number, curr: any) => acc + curr.amount, 0) || 0),
-      Estado: p.status
-    }))
+    const reportData = (properties as ReportProperty[]).map((property) => {
+      const totalExpenses = property.expenses?.reduce((acc, curr) => acc + Number(curr.amount || 0), 0) || 0
+      const price = Number(property.price || 0)
 
-    // 3. Crear el libro de Excel
-    const worksheet = XLSX.utils.json_to_sheet(reportData)
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Balance GestiDomus")
+      return {
+        Inmueble: property.name || "",
+        Inquilino: property.tenants?.[0]?.full_name || "Vacante",
+        "Ingresos Brutos": price,
+        "Gastos Totales": totalExpenses,
+        "Beneficio Neto": price - totalExpenses,
+        Estado: property.status || "",
+      }
+    })
 
-    // 4. Descargar
-    XLSX.writeFile(workbook, `Informe_GestiDomus_${new Date().getFullYear()}.xlsx`)
+    downloadCsv(`Informe_GestiDomus_${new Date().getFullYear()}.csv`, reportData)
   }
 
   return (
-    <Button 
-      variant="outline" 
-      onClick={downloadExcel}
+    <Button
+      variant="outline"
+      onClick={downloadReport}
       className="bg-emerald-50 border-emerald-600 text-emerald-700 hover:bg-emerald-100"
     >
-      <span>📊</span> Exportar Excel
+      <span>Exportar CSV</span>
     </Button>
   )
 }

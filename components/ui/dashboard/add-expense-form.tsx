@@ -125,9 +125,18 @@ export function AddExpenseForm({ properties }: { properties?: PropertyOption[] }
       }
 
       const base64 = await fileToBase64(selectedFile)
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session?.access_token) {
+        throw new Error("Debes iniciar sesion para analizar facturas.")
+      }
+
       const res = await fetch("/api/analyze-expense-invoice", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           fileName: selectedFile.name,
           mimeType: selectedFile.type || "application/octet-stream",
@@ -175,8 +184,7 @@ export function AddExpenseForm({ properties }: { properties?: PropertyOption[] }
         return
       }
 
-      const { data } = supabase.storage.from("vault").getPublicUrl(filePath)
-      finalReceiptUrl = data.publicUrl
+      finalReceiptUrl = filePath
     }
 
     const newExpense: Record<string, string | number | boolean | null> = {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { requireAuthenticatedUser } from "@/lib/server/supabase-auth"
 
 type PropertyCandidate = {
   id: number
@@ -26,6 +27,8 @@ type ExpenseAnalysis = {
   notes: string
   source: "ai" | "heuristic"
 }
+
+const MAX_ANALYSIS_BASE64_LENGTH = 20 * 1024 * 1024
 
 const DEFAULT_CATEGORIES = [
   "Seguro",
@@ -182,9 +185,28 @@ function buildFileContent(fileName: string, mimeType: string, base64: string) {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as AnalyzeExpenseInvoiceBody
+  const auth = await requireAuthenticatedUser(request)
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status })
+  }
+
+  let body: AnalyzeExpenseInvoiceBody
+
+  try {
+    body = (await request.json()) as AnalyzeExpenseInvoiceBody
+  } catch {
+    return NextResponse.json({ error: "La solicitud no tiene un JSON valido." }, { status: 400 })
+  }
+
   const categories = body.categories?.length ? body.categories : DEFAULT_CATEGORIES
   const fallback = heuristicAnalysis(body)
+
+  if (body.base64 && body.base64.length > MAX_ANALYSIS_BASE64_LENGTH) {
+    return NextResponse.json(
+      { ...fallback, notes: "La factura supera el tamano maximo permitido para analisis." },
+      { status: 413 }
+    )
+  }
 
   if (!process.env.OPENAI_API_KEY || !body.base64 || !body.fileName) {
     return NextResponse.json(fallback)
@@ -262,17 +284,16 @@ export async function POST(request: Request) {
     if (!response.ok) {
       return NextResponse.json({
         ...fallback,
-        notes: `No se pudo usar IA (${payload?.error?.message || payload?.message || "sin detalle"}). ${fallback.notes}`,
+        notes: `No se pudo usar IA. ${fallback.notes}`,
       })
     }
 
     const parsed = JSON.parse(extractResponseText(payload)) as Omit<ExpenseAnalysis, "source">
     return NextResponse.json({ ...parsed, source: "ai" })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Error desconocido"
+  } catch {
     return NextResponse.json({
       ...fallback,
-      notes: `No se pudo analizar con IA (${message}). ${fallback.notes}`,
+      notes: `No se pudo analizar con IA. ${fallback.notes}`,
     })
   }
 }

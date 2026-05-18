@@ -6,15 +6,21 @@ node_modules/
 out/
 build/
 
-# vercel
-.vercel/
-
 # env files
 .env
 .env.local
-.env*.local
-.env.production
+.env.*.local
 .env.development
+.env.production
+.env.test
+
+# deploy
+.vercel
+.netlify
+
+# private keys
+*.pem
+*.key
 
 # system
 .DS_Store
@@ -28,5 +34,3 @@ pnpm-debug.log*
 # claude
 .claude/
 tsconfig.tsbuildinfo
-
-.vercel

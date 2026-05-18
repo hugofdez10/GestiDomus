@@ -181,8 +181,7 @@ export function AddContractForm({
 
     if (uploadError) throw uploadError
 
-    const { data } = supabase.storage.from("vault").getPublicUrl(filePath)
-    return data.publicUrl
+    return filePath
   }
 
   async function handleSubmit(e: React.FormEvent) {

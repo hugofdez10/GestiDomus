@@ -33,6 +33,7 @@ import {
   Download,
 } from "lucide-react"
 import { exportTablePdf, formatDateEs, formatEuro } from "@/lib/pdf-export"
+import { getStorageDisplayUrl, isExternalStorageUrl } from "@/lib/storage"
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -296,6 +297,7 @@ export function RecibosPage() {
   const [paymentHolder, setPaymentHolder] = useState(ARRENDADOR.nombre)
   const [paymentIban, setPaymentIban] = useState(ARRENDADOR.iban)
   const [propertyAddress, setPropertyAddress] = useState("")
+  const [signedVaultUrls, setSignedVaultUrls] = useState<Record<string, string>>({})
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -450,6 +452,51 @@ export function RecibosPage() {
     setEmailSubject(viewInvoice.email_subject || `Recibo de alquiler – ${mesAno(viewInvoice)}`)
     setEmailFileName(viewInvoice.email_filename || buildDefaultPdfFileName(viewInvoice, tenant?.full_name || "inquilino"))
   }, [viewInvoice, data])
+
+  useEffect(() => {
+    if (!viewInvoice) return
+
+    const values = [
+      viewInvoice.invoice_pdf_url,
+      viewInvoice.combined_pdf_url,
+      ...getInvoiceAttachments(viewInvoice).map((item) => item.receiptUrl),
+    ].filter((value): value is string => !!value)
+
+    const missingValues = values.filter((value) => !signedVaultUrls[value])
+    if (missingValues.length === 0) return
+
+    let cancelled = false
+
+    async function resolveUrls() {
+      const entries = await Promise.all(
+        missingValues.map(async (value) => [
+          value,
+          await getStorageDisplayUrl(supabase, "vault", value).catch(() => null),
+        ] as const)
+      )
+
+      if (cancelled) return
+
+      setSignedVaultUrls((current) => {
+        const next = { ...current }
+        entries.forEach(([value, url]) => {
+          if (url) next[value] = url
+        })
+        return next
+      })
+    }
+
+    void resolveUrls()
+
+    return () => {
+      cancelled = true
+    }
+  }, [viewInvoice, signedVaultUrls])
+
+  function displayVaultUrl(value: string | null) {
+    if (!value) return null
+    return signedVaultUrls[value] || (isExternalStorageUrl(value) ? value : null)
+  }
 
   const filtered = data.filter((t) =>
     t.full_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -762,7 +809,10 @@ export function RecibosPage() {
   }
 
   async function fetchAsArrayBuffer(url: string) {
-    const response = await fetch(url)
+    const displayUrl = await getStorageDisplayUrl(supabase, "vault", url)
+    if (!displayUrl) throw new Error("No se pudo preparar el archivo.")
+
+    const response = await fetch(displayUrl)
     if (!response.ok) throw new Error(`No se pudo descargar el archivo (${response.status})`)
     return await response.arrayBuffer()
   }
@@ -974,8 +1024,7 @@ export function RecibosPage() {
       .upload(filePath, new Blob([uint8ArrayToArrayBuffer(pdfBytes)], { type: "application/pdf" }), { upsert: true, contentType: "application/pdf" })
     if (uploadError) throw uploadError
 
-    const { data } = supabase.storage.from("vault").getPublicUrl(filePath)
-    return data.publicUrl
+    return filePath
   }
 
   async function handlePrint(inv: Invoice) {
@@ -1075,7 +1124,7 @@ ${appendErrors.join("\n")}`)
         "",
         `Cuenta de domiciliación: ${effectiveHolder}`,
         effectiveIban,
-        combinedPdfUrl ? `Copia archivada del documento: ${combinedPdfUrl}` : "",
+        combinedPdfUrl ? "Copia archivada del documento: disponible en GestiDomus." : "",
         appendErrors.length > 0 ? `Avisos al anexar justificantes: ${appendErrors.join(" | ")}` : "",
         "",
         "Atentamente,",
@@ -1100,15 +1149,24 @@ ${appendErrors.join("\n")}`)
             ${escapeHtml(effectiveHolder)}<br />
             ${escapeHtml(effectiveIban)}
           </p>
-          ${combinedPdfUrl ? `<p><strong>Copia archivada del documento:</strong> <a href="${combinedPdfUrl}">${combinedPdfUrl}</a></p>` : ""}
+          ${combinedPdfUrl ? "<p><strong>Copia archivada del documento:</strong> disponible en GestiDomus.</p>" : ""}
           ${appendErrors.length > 0 ? `<p style="color:#b91c1c;"><strong>Avisos al anexar justificantes:</strong> ${escapeHtml(appendErrors.join(" | "))}</p>` : ""}
           <p>Atentamente,<br />${escapeHtml(effectiveHolder)}</p>
         </div>
       `
 
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session?.access_token) {
+        throw new Error("Debes iniciar sesion para enviar recibos.")
+      }
+
       const response = await fetch("/api/send-invoice-email", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           to: recipient,
           from: fromEmail,
@@ -1175,8 +1233,7 @@ ${appendErrors.join("\n")}`)
         .upload(filePath, file, { upsert: true, contentType: "application/pdf" })
       if (uploadError) throw uploadError
 
-      const { data } = supabase.storage.from("vault").getPublicUrl(filePath)
-      const url = data.publicUrl
+      const url = filePath
 
       const { error: updateError } = await supabase
         .from("invoices")
@@ -1463,6 +1520,7 @@ ${appendErrors.join("\n")}`)
             const propertyAddr = viewInvoice.property_address_snapshot || prop?.address || prop?.name || "—"
             const total = totalInvoice(viewInvoice)
             const attachments = getInvoiceAttachments(viewInvoice)
+            const invoicePdfDisplayUrl = displayVaultUrl(viewInvoice.invoice_pdf_url)
 
             const suministros: [string, number][] = [
               ["Gas:", viewInvoice.gas || 0],
@@ -1535,7 +1593,10 @@ ${appendErrors.join("\n")}`)
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {attachments.map((attachment) => (
+                        {attachments.map((attachment) => {
+                          const attachmentDisplayUrl = displayVaultUrl(attachment.receiptUrl)
+
+                          return (
                           <div key={attachment.key} className="rounded-lg border border-slate-200 overflow-hidden">
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 bg-slate-50 border-b border-slate-200">
                               <div>
@@ -1545,9 +1606,9 @@ ${appendErrors.join("\n")}`)
                                   {attachment.expenseId ? ` · gasto #${attachment.expenseId}` : ""}
                                 </p>
                               </div>
-                              {attachment.receiptUrl ? (
+                              {attachmentDisplayUrl ? (
                                 <a
-                                  href={attachment.receiptUrl}
+                                  href={attachmentDisplayUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 hover:text-blue-800"
@@ -1559,18 +1620,18 @@ ${appendErrors.join("\n")}`)
                               )}
                             </div>
 
-                            {attachment.receiptUrl ? (
+                            {attachmentDisplayUrl ? (
                               <div className="bg-white p-3">
                                 {isPdf(attachment.receiptUrl) ? (
                                   <iframe
-                                    src={attachment.receiptUrl}
+                                    src={attachmentDisplayUrl}
                                     title={`Justificante ${attachment.label}`}
                                     className="w-full rounded-md border border-slate-200"
                                     style={{ height: "420px" }}
                                   />
                                 ) : (
                                   <img
-                                    src={attachment.receiptUrl}
+                                    src={attachmentDisplayUrl}
                                     alt={`Justificante ${attachment.label}`}
                                     className="w-full max-h-[520px] object-contain rounded-md border border-slate-200 bg-slate-50"
                                   />
@@ -1578,7 +1639,8 @@ ${appendErrors.join("\n")}`)
                               </div>
                             ) : null}
                           </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -1658,10 +1720,10 @@ ${appendErrors.join("\n")}`)
                   <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                     📎 PDF / documento adicional del recibo
                   </p>
-                  {viewInvoice.invoice_pdf_url ? (
+                  {viewInvoice.invoice_pdf_url && invoicePdfDisplayUrl ? (
                     <div className="flex flex-wrap gap-2 items-center mb-2">
                       <a
-                        href={viewInvoice.invoice_pdf_url}
+                        href={invoicePdfDisplayUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
@@ -1669,7 +1731,7 @@ ${appendErrors.join("\n")}`)
                         <Eye className="w-3.5 h-3.5" /> Ver PDF
                       </a>
                       <a
-                        href={viewInvoice.invoice_pdf_url}
+                        href={invoicePdfDisplayUrl}
                         download
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-indigo-300 text-indigo-700 text-xs font-semibold hover:bg-indigo-50 transition-colors"
                       >

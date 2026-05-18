@@ -73,8 +73,7 @@ export function AddTenantForm({
         return
       }
 
-      const { data } = supabase.storage.from("vault").getPublicUrl(filePath)
-      finalDocumentUrl = data.publicUrl
+      finalDocumentUrl = filePath
     }
 
     const payload: TenantPayload = {

@@ -15,6 +15,7 @@ import { FileText, MessageCircle, Trash2, Users } from "lucide-react"
 import { EditTenantForm } from "./edit-tenant-form"
 import { smoothListItemMotion } from "./smooth-motion"
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
+import { getStorageDisplayUrl } from "@/lib/storage"
 
 type TenantRow = {
   id: number
@@ -23,6 +24,7 @@ type TenantRow = {
   phone?: string | null
   property_id?: number | null
   document_url?: string | null
+  documentDisplayUrl?: string | null
   properties?: { name?: string | null } | null
   contractStatus?: "vigente" | "finalizado" | "sin_contrato"
   contractPropertyName?: string | null
@@ -82,7 +84,7 @@ export function TenantList({ refreshKey = 0 }: { refreshKey?: number }) {
     const contracts = (contractsRes.data || []) as unknown as TenantContract[]
 
     if (!tenantsRes.error && tenantsRes.data) {
-      const mapped = (tenantsRes.data as TenantRow[])
+      const mapped = await Promise.all((tenantsRes.data as TenantRow[])
         .map((tenant) => {
           const contract =
             getActiveContractForTenant(tenant.id, contracts) ||
@@ -91,7 +93,7 @@ export function TenantList({ refreshKey = 0 }: { refreshKey?: number }) {
           const propertyRelation = contract?.properties
           const property = Array.isArray(propertyRelation) ? propertyRelation[0] : propertyRelation
 
-          return {
+          const mappedTenant = {
             ...tenant,
             contractStatus,
             contractPropertyName:
@@ -99,7 +101,13 @@ export function TenantList({ refreshKey = 0 }: { refreshKey?: number }) {
                 ? property?.name || null
                 : null,
           }
+          return getStorageDisplayUrl(supabase, "vault", tenant.document_url)
+            .then((documentDisplayUrl) => ({ ...mappedTenant, documentDisplayUrl }))
+            .catch(() => mappedTenant)
         })
+      )
+
+      mapped
         .sort((a, b) => {
           const aRank = a.contractStatus === "vigente" ? 0 : a.contractStatus === "finalizado" ? 1 : 2
           const bRank = b.contractStatus === "vigente" ? 0 : b.contractStatus === "finalizado" ? 1 : 2
@@ -217,9 +225,9 @@ export function TenantList({ refreshKey = 0 }: { refreshKey?: number }) {
 
                   <TableCell className="text-right">
                     <div className="flex justify-end items-center gap-2">
-                      {tenant.document_url && (
+                      {tenant.document_url && tenant.documentDisplayUrl && (
                         <a
-                          href={tenant.document_url}
+                          href={tenant.documentDisplayUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="p-2 hover:bg-blue-100 rounded-full transition-colors text-blue-600"

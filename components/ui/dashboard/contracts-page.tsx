@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { supabase } from "@/utils/supabase/client"
 import { deleteContract } from "@/lib/deleteContract"
+import { getStorageDisplayUrl } from "@/lib/storage"
 import { smoothListItemMotion } from "@/components/ui/dashboard/smooth-motion"
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 
@@ -475,14 +476,19 @@ export function ContractsPage() {
     setEditOpen(true)
   }
 
-  function openPreview(url?: string) {
+  async function openPreview(url?: string) {
     if (!url) {
       alert("Este contrato no tiene documento adjunto.")
       return
     }
 
-    setPreviewUrl(url)
-    setPreviewOpen(true)
+    try {
+      const displayUrl = await getStorageDisplayUrl(supabase, "vault", url)
+      setPreviewUrl(displayUrl || "")
+      setPreviewOpen(true)
+    } catch {
+      alert("No se pudo abrir el documento temporalmente.")
+    }
   }
 
   function updateSelectedField<K extends keyof ContractRow>(field: K, value: ContractRow[K]) {
@@ -523,7 +529,7 @@ export function ContractsPage() {
 
     if (error) throw error
 
-    return supabase.storage.from("vault").getPublicUrl(filePath).data.publicUrl
+    return filePath
   }
 
   async function handleDeletePdf() {

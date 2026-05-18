@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { requireAuthenticatedUser } from "@/lib/server/supabase-auth"
 
 type SendInvoiceEmailBody = {
   to?: string
@@ -9,6 +10,8 @@ type SendInvoiceEmailBody = {
   filename?: string
   pdfBase64?: string
 }
+
+const MAX_PDF_BASE64_LENGTH = 20 * 1024 * 1024
 
 function getAllowedFromEmails() {
   return (process.env.ALLOWED_FROM_EMAILS || process.env.NEXT_PUBLIC_ALLOWED_FROM_EMAILS || "")
@@ -30,6 +33,11 @@ function sanitizeAttachmentName(value: string) {
 
 export async function POST(request: Request) {
   try {
+    const auth = await requireAuthenticatedUser(request)
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status })
+    }
+
     if (!process.env.RESEND_API_KEY) {
       return NextResponse.json(
         { error: "Falta configurar RESEND_API_KEY" },
@@ -54,11 +62,18 @@ export async function POST(request: Request) {
       )
     }
 
+    if (pdfBase64.length > MAX_PDF_BASE64_LENGTH) {
+      return NextResponse.json(
+        { error: "El PDF adjunto es demasiado grande para enviarlo." },
+        { status: 413 }
+      )
+    }
+
     const allowedFromEmails = getAllowedFromEmails()
 
     if (allowedFromEmails.length > 0 && !allowedFromEmails.includes(from)) {
       return NextResponse.json(
-        { error: `El remitente ${from} no está permitido. Revisa ALLOWED_FROM_EMAILS.` },
+        { error: `El remitente ${from} no esta permitido. Revisa ALLOWED_FROM_EMAILS.` },
         { status: 400 }
       )
     }
@@ -88,8 +103,8 @@ export async function POST(request: Request) {
 
     if (!resendResponse.ok) {
       return NextResponse.json(
-        { error: resendJson?.message || resendJson?.error || "Error enviando email" },
-        { status: resendResponse.status || 502 }
+        { error: "No se pudo enviar el email. Revisa la configuracion del proveedor." },
+        { status: resendResponse.status >= 400 && resendResponse.status < 500 ? 400 : 502 }
       )
     }
 
@@ -97,9 +112,9 @@ export async function POST(request: Request) {
       ok: true,
       emailId: resendJson?.id || null,
     })
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
-      { error: error?.message || "No se pudo procesar el envío del recibo" },
+      { error: "No se pudo procesar el envio del recibo" },
       { status: 500 }
     )
   }

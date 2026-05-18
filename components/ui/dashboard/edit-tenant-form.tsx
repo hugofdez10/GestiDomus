@@ -8,11 +8,13 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ExternalLink, Pencil, UploadCloud } from "lucide-react"
+import { getStorageDisplayUrl } from "@/lib/storage"
 
 export function EditTenantForm({ tenant, onUpdate }: { tenant: any; onUpdate: () => void }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [file, setFile] = useState<File | null>(null)
+  const [currentDocumentUrl, setCurrentDocumentUrl] = useState<string | null>(null)
   const [propertiesList, setPropertiesList] = useState<any[]>([])
 
   const [formData, setFormData] = useState({
@@ -32,6 +34,13 @@ export function EditTenantForm({ tenant, onUpdate }: { tenant: any; onUpdate: ()
       property_id: tenant.property_id ? tenant.property_id.toString() : "none",
     })
     setFile(null)
+    setCurrentDocumentUrl(null)
+
+    if (tenant.document_url) {
+      getStorageDisplayUrl(supabase, "vault", tenant.document_url)
+        .then(setCurrentDocumentUrl)
+        .catch(() => setCurrentDocumentUrl(null))
+    }
 
     async function fetchProperties() {
       const { data } = await supabase.from("properties").select("id, name").order("name")
@@ -60,8 +69,7 @@ export function EditTenantForm({ tenant, onUpdate }: { tenant: any; onUpdate: ()
         return
       }
 
-      const { data } = supabase.storage.from("vault").getPublicUrl(filePath)
-      finalDocumentUrl = data.publicUrl
+      finalDocumentUrl = filePath
     }
 
     const payload: any = {
@@ -145,9 +153,9 @@ export function EditTenantForm({ tenant, onUpdate }: { tenant: any; onUpdate: ()
             </Select>
           </div>
 
-          {tenant.document_url && (
+          {tenant.document_url && currentDocumentUrl && (
             <a
-              href={tenant.document_url}
+              href={currentDocumentUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 text-sm text-blue-600 font-semibold hover:underline"

@@ -5,9 +5,18 @@ import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { FileText, Download, Trash2, UploadCloud } from "lucide-react"
+import { getStorageDisplayUrl } from "@/lib/storage"
+
+type PropertyDocumentRow = {
+  id: string | number
+  name: string
+  url: string | null
+  type?: string | null
+  displayUrl?: string | null
+}
 
 export function PropertyDocs({ propertyId }: { propertyId: string }) {
-  const [docs, setDocs] = useState<any[]>([])
+  const [docs, setDocs] = useState<PropertyDocumentRow[]>([])
   const [uploading, setUploading] = useState(false)
 
   async function fetchDocs() {
@@ -15,7 +24,15 @@ export function PropertyDocs({ propertyId }: { propertyId: string }) {
       .from('property_documents')
       .select('*')
       .eq('property_id', propertyId)
-    if (data) setDocs(data)
+    if (data) {
+      const docsWithUrls = await Promise.all(
+        (data as PropertyDocumentRow[]).map(async (doc) => ({
+          ...doc,
+          displayUrl: await getStorageDisplayUrl(supabase, "property-docs", doc.url).catch(() => null),
+        }))
+      )
+      setDocs(docsWithUrls)
+    }
   }
 
   useEffect(() => { fetchDocs() }, [propertyId])
@@ -31,19 +48,16 @@ export function PropertyDocs({ propertyId }: { propertyId: string }) {
       const filePath = `${propertyId}/${fileName}`
 
       // 1. Subir al Storage
-      let { error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('property-docs')
         .upload(filePath, file)
 
       if (uploadError) throw uploadError
 
-      // 2. Guardar referencia en la tabla
-      const { data: { publicUrl } } = supabase.storage.from('property-docs').getPublicUrl(filePath)
-      
       await supabase.from('property_documents').insert({
         property_id: propertyId,
         name: file.name,
-        url: publicUrl,
+        url: filePath,
         type: fileExt
       })
 
@@ -75,9 +89,11 @@ export function PropertyDocs({ propertyId }: { propertyId: string }) {
               <span className="truncate max-w-[150px]">{doc.name}</span>
             </div>
             <div className="flex gap-2">
-              <a href={doc.url} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-blue-600">
+              {doc.displayUrl && (
+                <a href={doc.displayUrl} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-blue-600">
                 <Download className="w-4 h-4" />
-              </a>
+                </a>
+              )}
             </div>
           </div>
         ))}

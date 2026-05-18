@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { EditExpenseForm } from "./edit-expense-form"
 import { exportTablePdf, formatDateEs, formatEuro } from "@/lib/pdf-export"
+import { getStorageDisplayUrl } from "@/lib/storage"
 
 const CONCEPTOS = [
   "Seguro", "Limpieza", "Comunidad", "Electricidad", "Gas", 
@@ -82,6 +83,14 @@ export function ExpenseList({ year: globalYear }: { year: string }) {
 
   const isPdf = (url: string) => url.toLowerCase().includes('.pdf') || url.toLowerCase().includes('pdf')
   const isImage = (url: string) => /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url)
+
+  async function openReceipt(storedUrl: string) {
+    try {
+      setViewReceiptUrl(await getStorageDisplayUrl(supabase, "vault", storedUrl))
+    } catch {
+      alert("No se pudo abrir la factura temporalmente.")
+    }
+  }
 
   function exportFilteredPdf() {
     const total = filteredExpenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0)
@@ -217,7 +226,7 @@ export function ExpenseList({ year: globalYear }: { year: string }) {
                       {exp.receipt_url && (
                         // ─── CAMBIADO: visor interno en lugar de nueva pestaña ───
                         <button
-                          onClick={() => setViewReceiptUrl(exp.receipt_url)}
+                          onClick={() => exp.receipt_url && openReceipt(exp.receipt_url)}
                           className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
                           title="Ver Factura"
                         >

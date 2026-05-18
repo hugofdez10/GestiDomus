@@ -8,11 +8,13 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Pencil, UploadCloud, UserCircle, Home, ExternalLink } from "lucide-react"
+import { getStorageDisplayUrl } from "@/lib/storage"
 
 export function EditExpenseForm({ expense, onUpdate }: { expense: any, onUpdate: () => void }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [file, setFile] = useState<File | null>(null)
+  const [currentReceiptUrl, setCurrentReceiptUrl] = useState<string | null>(null)
   
   const [propertiesList, setPropertiesList] = useState<any[]>([])
   
@@ -43,6 +45,13 @@ export function EditExpenseForm({ expense, onUpdate }: { expense: any, onUpdate:
         is_tenant_paid: expense.is_tenant_paid === false ? "false" : "true"
       })
       setFile(null)
+      setCurrentReceiptUrl(null)
+
+      if (expense.receipt_url) {
+        getStorageDisplayUrl(supabase, "vault", expense.receipt_url)
+          .then(setCurrentReceiptUrl)
+          .catch(() => setCurrentReceiptUrl(null))
+      }
     }
   }, [open, expense])
 
@@ -59,10 +68,7 @@ export function EditExpenseForm({ expense, onUpdate }: { expense: any, onUpdate:
 
       const { error: uploadError } = await supabase.storage.from('vault').upload(filePath, file)
 
-      if (!uploadError) {
-        const { data } = supabase.storage.from('vault').getPublicUrl(filePath)
-        finalReceiptUrl = data.publicUrl
-      }
+      if (!uploadError) finalReceiptUrl = filePath
     }
 
     const updatedExpense: any = {
@@ -162,8 +168,8 @@ export function EditExpenseForm({ expense, onUpdate }: { expense: any, onUpdate:
             <Label className="flex items-center gap-2 text-blue-600 font-bold">
               <UploadCloud className="w-4 h-4" /> Modificar Factura
             </Label>
-            {expense.receipt_url && !file && (
-              <a href={expense.receipt_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 flex items-center gap-1 mb-2 hover:underline">
+            {expense.receipt_url && !file && currentReceiptUrl && (
+              <a href={currentReceiptUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 flex items-center gap-1 mb-2 hover:underline">
                 <ExternalLink className="w-3 h-3" /> Ver factura actual
               </a>
             )}

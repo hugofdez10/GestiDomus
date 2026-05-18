@@ -92,3 +92,25 @@ Este proyecto ha sido desarrollado como una aplicación full-stack moderna, comb
 ![Inmuebles](./docs/screenshots/properties.png)
 ![Contratos](./docs/screenshots/contracts.png)
 ![Pagos](./docs/screenshots/payments.png)
+```
+
+---
+
+## Configuracion de entorno
+
+Crea un `.env.local` a partir de `.env.example` y rellena solo valores locales o del proveedor de despliegue. No subas `.env`, `.env.local`, claves privadas ni secretos al repositorio.
+
+Variables publicas usadas en cliente:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_ALLOWED_FROM_EMAILS`
+
+Variables privadas usadas solo en servidor/API routes:
+
+- `RESEND_API_KEY`
+- `ALLOWED_FROM_EMAILS`
+- `OPENAI_API_KEY`
+- `OPENAI_INVOICE_MODEL`
+
+No uses `SUPABASE_SERVICE_ROLE_KEY` en componentes cliente. Si alguna vez se necesita una service role key, debe quedar limitada a codigo de servidor y nunca exponerse con prefijo `NEXT_PUBLIC_`.

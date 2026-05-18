@@ -34,3 +34,6 @@ pnpm-debug.log*
 # claude
 .claude/
 tsconfig.tsbuildinfo
+
+# supabase local metadata
+supabase/.temp/

@@ -136,8 +136,8 @@ const MESES = [
 ]
 
 const ARRENDADOR = {
-  nombre: "Francisco Javier Fernández Alonso",
-  iban: "ES95 0049 6254 3424 9504 3155",
+  nombre: "Nombre del arrendador",
+  iban: "ES00 0000 0000 0000 0000 0000",
 }
 
 const AVAILABLE_FROM_EMAILS = (process.env.NEXT_PUBLIC_ALLOWED_FROM_EMAILS || "")

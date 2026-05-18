@@ -28,28 +28,29 @@ type InvoiceTemplateData = {
   note: string
 }
 
-const STORAGE_KEY = "gestidomus_invoice_template_alquiler_abril"
+const LEGACY_STORAGE_KEY = "gestidomus_invoice_template_alquiler_abril"
+const STORAGE_KEY = "gestidomus_invoice_template_generic_v2"
 const DOCX_URL = "/templates/factura-alquiler-abril.docx"
 
 const DEFAULT_TEMPLATE: InvoiceTemplateData = {
-  invoiceNumber: "2026/02",
-  date: "2026-04-09",
-  landlordName: "Elisa Díez Herrera",
-  landlordTaxId: "72035918-X",
-  landlordAddress: "C/La Mies,17 - Maliaño (Cantabria)",
-  landlordEmail: "eli10hsa@hotmail.com",
-  tenantName: "Coproinesga, S.L.",
-  tenantTaxId: "B-94167012",
-  tenantAddress: "Lugar Devilalen,23 - Cercedo (Pontevedra)",
-  tenantEmail: "gestion@coproinesga.com",
+  invoiceNumber: "2026/001",
+  date: "2026-01-01",
+  landlordName: "Nombre del arrendador",
+  landlordTaxId: "00000000X",
+  landlordAddress: "Direccion del arrendador",
+  landlordEmail: "arrendador@example.com",
+  tenantName: "Nombre del arrendatario",
+  tenantTaxId: "B00000000",
+  tenantAddress: "Direccion del arrendatario",
+  tenantEmail: "arrendatario@example.com",
   concept:
-    "Arrendamiento de vivienda situada en Urbanización Buenos Aires, 2 2ºdcha, Muriedas (Cantabria), correspondiente al mes de Abril de 2026, con arreglo a lo estipulado en el contrato de arrendamiento",
-  netAmount: "1500",
+    "Arrendamiento de vivienda situada en direccion del inmueble, correspondiente al periodo indicado, con arreglo a lo estipulado en el contrato de arrendamiento.",
+  netAmount: "0",
   vatAmount: "0",
   irpfAmount: "0",
-  iban: "ES95 0049 6254 3424 9504 3155",
+  iban: "ES00 0000 0000 0000 0000 0000",
   paymentMethod: "Transferencia bancaria",
-  note: "Exento de IVA y Retención según resolución número 03856/2013/00/00 del TEAC",
+  note: "Nota o condiciones fiscales aplicables.",
 }
 
 function euro(value: string) {
@@ -73,6 +74,7 @@ export function InvoiceTemplateEditor() {
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
+      window.localStorage.removeItem(LEGACY_STORAGE_KEY)
       const saved = window.localStorage.getItem(STORAGE_KEY)
       if (saved) setFormData({ ...DEFAULT_TEMPLATE, ...JSON.parse(saved) })
     }, 0)
@@ -161,7 +163,7 @@ export function InvoiceTemplateEditor() {
               download
               className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
-              <Download className="w-4 h-4" /> DOCX original
+              <Download className="w-4 h-4" /> DOCX plantilla
             </a>
             <Button type="button" variant="outline" onClick={saveTemplate} className="gap-2">
               <Save className="w-4 h-4" /> Guardar

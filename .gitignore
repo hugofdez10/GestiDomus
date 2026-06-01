@@ -37,3 +37,4 @@ tsconfig.tsbuildinfo
 
 # supabase local metadata
 supabase/.temp/
+.env*.local

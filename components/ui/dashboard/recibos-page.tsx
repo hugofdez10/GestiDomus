@@ -12,7 +12,6 @@ import {
   getActiveContractForTenant,
   getContractDisplayStatus,
   getMostRecentContractForTenant,
-  isContractInForce,
   type ContractDisplayStatus,
 } from "@/lib/contracts"
 import {
@@ -503,7 +502,7 @@ export function RecibosPage() {
     (t.email || "").toLowerCase().includes(search.toLowerCase())
   )
 
-  const hasActiveContract = (t: TenantWithContract) => isContractInForce(t.contract)
+  const hasRentContract = (t: TenantWithContract) => Boolean(t.contract)
 
   function openGenerarRecibo(tenant: TenantWithContract) {
     setSelectedTenant(tenant)
@@ -1351,7 +1350,7 @@ ${appendErrors.join("\n")}`)
         <div className="flex flex-col gap-3">
           {filtered.map((tenant) => {
             const expanded = expandedTenants.has(tenant.id)
-            const isActive = hasActiveContract(tenant)
+            const canGenerateReceipt = hasRentContract(tenant)
             const property = tenant.contract?.properties
 
             return (
@@ -1402,7 +1401,7 @@ ${appendErrors.join("\n")}`)
                         <p className="font-bold text-red-600">{fmt(tenant.pendingTotal)}</p>
                       </div>
                     )}
-                    {isActive && (
+                    {canGenerateReceipt && (
                       <Button
                         size="sm"
                         className="bg-blue-600 hover:bg-blue-700 text-white gap-1 shrink-0"
@@ -1425,7 +1424,7 @@ ${appendErrors.join("\n")}`)
                       <div className="py-8 text-center text-slate-400 text-sm">
                         <Receipt className="w-8 h-8 mx-auto mb-2 opacity-30" />
                         <p>No hay recibos todavía</p>
-                        {isActive && (
+                        {canGenerateReceipt && (
                           <button className="mt-2 text-blue-600 text-xs underline" onClick={() => openGenerarRecibo(tenant)}>
                             Generar primer recibo
                           </button>

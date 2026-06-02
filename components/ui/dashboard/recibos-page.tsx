@@ -83,6 +83,7 @@ type Invoice = {
   agua_receipt_url: string | null
   internet_expense_id: number | null
   internet_receipt_url: string | null
+  utility_attachments: StoredUtilityAttachment[] | null
   property_address_snapshot: string | null
   payment_account_holder: string | null
   payment_account_iban: string | null
@@ -119,12 +120,23 @@ type TenantWithContract = Tenant & {
 
 type UtilityKey = "gas" | "luz" | "agua" | "internet"
 
-type InvoiceAttachment = {
-  key: UtilityKey
+type StoredUtilityAttachment = {
+  utility: UtilityKey
   label: string
   amount: number
   expenseId: number | null
   receiptUrl: string | null
+  date?: string | null
+}
+
+type InvoiceAttachment = {
+  key: string
+  utility: UtilityKey
+  label: string
+  amount: number
+  expenseId: number | null
+  receiptUrl: string | null
+  date?: string | null
 }
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -217,31 +229,89 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#039;")
 }
 
+type PdfFontLike = {
+  widthOfTextAtSize(text: string, size: number): number
+}
+
+function wrapPdfText(text: string, font: PdfFontLike, size: number, maxWidth: number) {
+  const words = text.split(/\s+/).filter(Boolean)
+  const lines: string[] = []
+  let current = ""
+
+  words.forEach((word) => {
+    const next = current ? `${current} ${word}` : word
+    if (font.widthOfTextAtSize(next, size) <= maxWidth) {
+      current = next
+      return
+    }
+
+    if (current) lines.push(current)
+    current = word
+  })
+
+  if (current) lines.push(current)
+  return lines.length ? lines : [""]
+}
+
+const UTILITY_LABELS: Record<UtilityKey, string> = {
+  gas: "Gas",
+  luz: "Luz",
+  agua: "Agua",
+  internet: "Internet",
+}
+
+function getAttachmentKey(item: Pick<InvoiceAttachment, "utility" | "expenseId" | "receiptUrl">, index: number) {
+  return `${item.utility}-${item.expenseId || item.receiptUrl || index}`
+}
+
 function getInvoiceAttachments(inv: Invoice): InvoiceAttachment[] {
+  const storedAttachments = Array.isArray(inv.utility_attachments) ? inv.utility_attachments : []
+
+  if (storedAttachments.length > 0) {
+    return storedAttachments
+      .map((item, index) => {
+        const utility = item.utility
+        return {
+          key: getAttachmentKey({ utility, expenseId: item.expenseId, receiptUrl: item.receiptUrl }, index),
+          utility,
+          label: item.label || UTILITY_LABELS[utility] || "Suministro",
+          amount: Number(item.amount) || 0,
+          expenseId: item.expenseId || null,
+          receiptUrl: item.receiptUrl || null,
+          date: item.date || null,
+        }
+      })
+      .filter((item) => item.amount > 0 || !!item.receiptUrl || !!item.expenseId)
+  }
+
   const attachments: InvoiceAttachment[] = [
     {
-      key: "gas",
+      key: "gas-legacy",
+      utility: "gas",
       label: "Gas",
       amount: inv.gas || 0,
       expenseId: inv.gas_expense_id,
       receiptUrl: inv.gas_receipt_url,
     },
     {
-      key: "luz",
+      key: "luz-legacy",
+      utility: "luz",
       label: "Luz",
       amount: inv.luz || 0,
       expenseId: inv.luz_expense_id,
       receiptUrl: inv.luz_receipt_url,
     },
     {
-      key: "agua",
+      key: "agua-legacy",
+      utility: "agua",
       label: "Agua",
       amount: inv.agua || 0,
       expenseId: inv.agua_expense_id,
       receiptUrl: inv.agua_receipt_url,
     },
     {
-      key: "internet",
+      key: "internet-legacy",
+      utility: "internet",
       label: "Internet",
       amount: inv.internet || 0,
       expenseId: inv.internet_expense_id,
@@ -271,6 +341,7 @@ export function RecibosPage() {
   const [formLuz, setFormLuz] = useState("")
   const [formAgua, setFormAgua] = useState("")
   const [formInternet, setFormInternet] = useState("")
+  const [formNotes, setFormNotes] = useState("")
   const [formSaving, setFormSaving] = useState(false)
 
   const [expensesGas, setExpensesGas] = useState<Expense[]>([])
@@ -279,10 +350,10 @@ export function RecibosPage() {
   const [expensesInternet, setExpensesInternet] = useState<Expense[]>([])
   const [loadingExpenses, setLoadingExpenses] = useState(false)
 
-  const [selectedGasExpenseId, setSelectedGasExpenseId] = useState<number | null>(null)
-  const [selectedLuzExpenseId, setSelectedLuzExpenseId] = useState<number | null>(null)
-  const [selectedAguaExpenseId, setSelectedAguaExpenseId] = useState<number | null>(null)
-  const [selectedInternetExpenseId, setSelectedInternetExpenseId] = useState<number | null>(null)
+  const [selectedGasExpenseIds, setSelectedGasExpenseIds] = useState<number[]>([])
+  const [selectedLuzExpenseIds, setSelectedLuzExpenseIds] = useState<number[]>([])
+  const [selectedAguaExpenseIds, setSelectedAguaExpenseIds] = useState<number[]>([])
+  const [selectedInternetExpenseIds, setSelectedInternetExpenseIds] = useState<number[]>([])
 
   const [invoicePdfFile, setInvoicePdfFile] = useState<File | null>(null)
   const [uploadingPdf, setUploadingPdf] = useState(false)
@@ -293,6 +364,7 @@ export function RecibosPage() {
   const [emailFrom, setEmailFrom] = useState(AVAILABLE_FROM_EMAILS[0] || "")
   const [emailSubject, setEmailSubject] = useState("")
   const [emailFileName, setEmailFileName] = useState("")
+  const [invoiceNotes, setInvoiceNotes] = useState("")
   const [paymentHolder, setPaymentHolder] = useState(ARRENDADOR.nombre)
   const [paymentIban, setPaymentIban] = useState(ARRENDADOR.iban)
   const [propertyAddress, setPropertyAddress] = useState("")
@@ -309,45 +381,7 @@ export function RecibosPage() {
         .order("start_date", { ascending: false }),
       supabase
         .from("invoices")
-        .select(`
-          id,
-          contract_id,
-          property_id,
-          tenant_id,
-          billing_year,
-          billing_month,
-          billing_period,
-          due_date,
-          amount,
-          gas,
-          luz,
-          agua,
-          internet,
-          gas_expense_id,
-          gas_receipt_url,
-          luz_expense_id,
-          luz_receipt_url,
-          agua_expense_id,
-          agua_receipt_url,
-          internet_expense_id,
-          internet_receipt_url,
-          property_address_snapshot,
-          payment_account_holder,
-          payment_account_iban,
-          email_status,
-          sent_to_email,
-          sent_from_email,
-          email_subject,
-          email_filename,
-          email_error,
-          combined_pdf_url,
-          status,
-          sent_at,
-          paid_at,
-          notes,
-          invoice_pdf_url,
-          created_at
-        `)
+        .select("*")
         .order("billing_year", { ascending: false })
         .order("billing_month", { ascending: false }),
     ])
@@ -394,46 +428,114 @@ export function RecibosPage() {
     setLoadingExpenses(false)
   }
 
-  function getExpenseByUtility(kind: UtilityKey, expenseId: number | null) {
-    if (!expenseId) return null
-
-    const source =
-      kind === "gas"
-        ? expensesGas
-        : kind === "luz"
-          ? expensesLuz
-          : kind === "agua"
-            ? expensesAgua
-            : expensesInternet
-
-    return source.find((exp) => exp.id === expenseId) || null
+  function getExpensesByUtility(kind: UtilityKey) {
+    if (kind === "gas") return expensesGas
+    if (kind === "luz") return expensesLuz
+    if (kind === "agua") return expensesAgua
+    return expensesInternet
   }
 
-  function setArchivedExpense(kind: UtilityKey, expenseIdRaw: string) {
-    const expenseId = Number(expenseIdRaw)
-    const expense = getExpenseByUtility(kind, expenseId)
-    if (!expense) return
+  function getExpenseByUtility(kind: UtilityKey, expenseId: number | null) {
+    if (!expenseId) return null
+    return getExpensesByUtility(kind).find((exp) => exp.id === expenseId) || null
+  }
 
+  function getSelectedExpenseIds(kind: UtilityKey) {
+    if (kind === "gas") return selectedGasExpenseIds
+    if (kind === "luz") return selectedLuzExpenseIds
+    if (kind === "agua") return selectedAguaExpenseIds
+    return selectedInternetExpenseIds
+  }
+
+  function setSelectedExpenseIds(kind: UtilityKey, ids: number[]) {
     if (kind === "gas") {
-      setSelectedGasExpenseId(expense.id)
-      setFormGas(String(expense.amount))
+      setSelectedGasExpenseIds(ids)
       return
     }
 
     if (kind === "luz") {
-      setSelectedLuzExpenseId(expense.id)
-      setFormLuz(String(expense.amount))
+      setSelectedLuzExpenseIds(ids)
       return
     }
 
     if (kind === "agua") {
-      setSelectedAguaExpenseId(expense.id)
-      setFormAgua(String(expense.amount))
+      setSelectedAguaExpenseIds(ids)
       return
     }
 
-    setSelectedInternetExpenseId(expense.id)
-    setFormInternet(String(expense.amount))
+    setSelectedInternetExpenseIds(ids)
+  }
+
+  function setUtilityAmount(kind: UtilityKey, value: string) {
+    if (kind === "gas") {
+      setFormGas(value)
+      return
+    }
+
+    if (kind === "luz") {
+      setFormLuz(value)
+      return
+    }
+
+    if (kind === "agua") {
+      setFormAgua(value)
+      return
+    }
+
+    setFormInternet(value)
+  }
+
+  function getSelectedExpenses(kind: UtilityKey, ids = getSelectedExpenseIds(kind)) {
+    return ids
+      .map((id) => getExpenseByUtility(kind, id))
+      .filter((expense): expense is Expense => !!expense)
+  }
+
+  function syncUtilityAmountFromExpenses(kind: UtilityKey, ids: number[]) {
+    const amount = getSelectedExpenses(kind, ids).reduce((sum, expense) => sum + Number(expense.amount || 0), 0)
+    setUtilityAmount(kind, amount > 0 ? String(amount) : "")
+  }
+
+  function addArchivedExpense(kind: UtilityKey, expenseIdRaw: string) {
+    const expenseId = Number(expenseIdRaw)
+    const expense = getExpenseByUtility(kind, expenseId)
+    if (!expense) return
+
+    const nextIds = Array.from(new Set([...getSelectedExpenseIds(kind), expense.id]))
+    setSelectedExpenseIds(kind, nextIds)
+    syncUtilityAmountFromExpenses(kind, nextIds)
+  }
+
+  function removeArchivedExpense(kind: UtilityKey, expenseId: number) {
+    const nextIds = getSelectedExpenseIds(kind).filter((id) => id !== expenseId)
+    setSelectedExpenseIds(kind, nextIds)
+    syncUtilityAmountFromExpenses(kind, nextIds)
+  }
+
+  function clearArchivedExpenses(kind: UtilityKey, value: string) {
+    setSelectedExpenseIds(kind, [])
+    setUtilityAmount(kind, value)
+  }
+
+  function invoiceUsesExpense(expenseId: number) {
+    return data.some((tenant) =>
+      tenant.invoices.some((invoice) => getInvoiceAttachments(invoice).some((attachment) => attachment.expenseId === expenseId))
+    )
+  }
+
+  function buildUtilityAttachments(): StoredUtilityAttachment[] {
+    const utilities: UtilityKey[] = ["gas", "luz", "agua", "internet"]
+
+    return utilities.flatMap((kind) =>
+      getSelectedExpenses(kind).map((expense) => ({
+        utility: kind,
+        label: UTILITY_LABELS[kind],
+        amount: Number(expense.amount) || 0,
+        expenseId: expense.id,
+        receiptUrl: expense.receipt_url || null,
+        date: expense.date || null,
+      }))
+    )
   }
 
   useEffect(() => {
@@ -450,6 +552,7 @@ export function RecibosPage() {
     setEmailFrom(viewInvoice.sent_from_email || property?.sender_email || AVAILABLE_FROM_EMAILS[0] || "")
     setEmailSubject(viewInvoice.email_subject || `Recibo de alquiler – ${mesAno(viewInvoice)}`)
     setEmailFileName(viewInvoice.email_filename || buildDefaultPdfFileName(viewInvoice, tenant?.full_name || "inquilino"))
+    setInvoiceNotes(viewInvoice.notes || "")
   }, [viewInvoice, data])
 
   useEffect(() => {
@@ -513,10 +616,11 @@ export function RecibosPage() {
     setFormLuz("")
     setFormAgua("")
     setFormInternet("")
-    setSelectedGasExpenseId(null)
-    setSelectedLuzExpenseId(null)
-    setSelectedAguaExpenseId(null)
-    setSelectedInternetExpenseId(null)
+    setFormNotes("")
+    setSelectedGasExpenseIds([])
+    setSelectedLuzExpenseIds([])
+    setSelectedAguaExpenseIds([])
+    setSelectedInternetExpenseIds([])
     setShowGenerarForm(true)
     if (tenant.contract?.property_id) fetchExpensesForProperty(tenant.contract.property_id)
   }
@@ -537,10 +641,11 @@ export function RecibosPage() {
     const billingPeriod = `${formAno}-${pad(formMes)}-01`
     const dueDate = `${formAno}-${pad(formMes)}-05`
 
-    const gasExpense = getExpenseByUtility("gas", selectedGasExpenseId)
-    const luzExpense = getExpenseByUtility("luz", selectedLuzExpenseId)
-    const aguaExpense = getExpenseByUtility("agua", selectedAguaExpenseId)
-    const internetExpense = getExpenseByUtility("internet", selectedInternetExpenseId)
+    const gasExpense = getSelectedExpenses("gas")[0] || null
+    const luzExpense = getSelectedExpenses("luz")[0] || null
+    const aguaExpense = getSelectedExpenses("agua")[0] || null
+    const internetExpense = getSelectedExpenses("internet")[0] || null
+    const utilityAttachments = buildUtilityAttachments()
 
     const payload = {
       contract_id: selectedTenant.contract.id,
@@ -563,6 +668,7 @@ export function RecibosPage() {
       agua_receipt_url: aguaExpense?.receipt_url || null,
       internet_expense_id: internetExpense?.id || null,
       internet_receipt_url: internetExpense?.receipt_url || null,
+      utility_attachments: utilityAttachments,
       property_address_snapshot: selectedTenant.contract.properties?.address || selectedTenant.contract.properties?.name || null,
       payment_account_holder: selectedTenant.contract.properties?.payment_account_holder || ARRENDADOR.nombre,
       payment_account_iban: selectedTenant.contract.properties?.payment_account_iban || ARRENDADOR.iban,
@@ -593,6 +699,7 @@ export function RecibosPage() {
           agua_receipt_url: aguaExpense?.receipt_url || null,
           internet_expense_id: internetExpense?.id || null,
           internet_receipt_url: internetExpense?.receipt_url || null,
+          utility_attachments: utilityAttachments,
           property_address_snapshot: selectedTenant.contract.properties?.address || selectedTenant.contract.properties?.name || null,
           payment_account_holder: selectedTenant.contract.properties?.payment_account_holder || ARRENDADOR.nombre,
           payment_account_iban: selectedTenant.contract.properties?.payment_account_iban || ARRENDADOR.iban,
@@ -606,7 +713,7 @@ export function RecibosPage() {
           status: "pending",
           sent_at: null,
           paid_at: null,
-          notes: null,
+          notes: formNotes.trim() || null,
           invoice_pdf_url: null,
           created_at: new Date().toISOString(),
         },
@@ -615,10 +722,16 @@ export function RecibosPage() {
       email_error: null,
       combined_pdf_url: null,
       status: "pending",
-      notes: `Recibo ${MESES[formMes - 1]} ${formAno}`,
+      notes: formNotes.trim() || null,
     }
 
-    const { error } = await supabase.from("invoices").insert(payload)
+    let { error } = await supabase.from("invoices").insert(payload)
+    if (error && error.message.toLowerCase().includes("utility_attachments")) {
+      const legacyPayload: Record<string, unknown> = { ...payload }
+      delete legacyPayload.utility_attachments
+      ;({ error } = await supabase.from("invoices").insert(legacyPayload))
+    }
+
     if (error) {
       alert("Error al crear el recibo: " + error.message)
     } else {
@@ -686,6 +799,7 @@ export function RecibosPage() {
       sent_from_email: emailFrom.trim() || null,
       email_subject: emailSubject.trim() || null,
       email_filename: ensurePdfFileName(emailFileName || "recibo"),
+      notes: invoiceNotes.trim() || null,
     }
   }
 
@@ -697,45 +811,7 @@ export function RecibosPage() {
         .from("invoices")
         .update(patch)
         .eq("id", inv.id)
-        .select(`
-          id,
-          contract_id,
-          property_id,
-          tenant_id,
-          billing_year,
-          billing_month,
-          billing_period,
-          due_date,
-          amount,
-          gas,
-          luz,
-          agua,
-          internet,
-          gas_expense_id,
-          gas_receipt_url,
-          luz_expense_id,
-          luz_receipt_url,
-          agua_expense_id,
-          agua_receipt_url,
-          internet_expense_id,
-          internet_receipt_url,
-          property_address_snapshot,
-          payment_account_holder,
-          payment_account_iban,
-          email_status,
-          sent_to_email,
-          sent_from_email,
-          email_subject,
-          email_filename,
-          email_error,
-          combined_pdf_url,
-          status,
-          sent_at,
-          paid_at,
-          notes,
-          invoice_pdf_url,
-          created_at
-        `)
+        .select("*")
         .single()
 
       if (error) throw error
@@ -758,45 +834,7 @@ export function RecibosPage() {
       .from("invoices")
       .update(patch)
       .eq("id", inv.id)
-      .select(`
-        id,
-        contract_id,
-        property_id,
-        tenant_id,
-        billing_year,
-        billing_month,
-        billing_period,
-        due_date,
-        amount,
-        gas,
-        luz,
-        agua,
-        internet,
-        gas_expense_id,
-        gas_receipt_url,
-        luz_expense_id,
-        luz_receipt_url,
-        agua_expense_id,
-        agua_receipt_url,
-        internet_expense_id,
-        internet_receipt_url,
-        property_address_snapshot,
-        payment_account_holder,
-        payment_account_iban,
-        email_status,
-        sent_to_email,
-        sent_from_email,
-        email_subject,
-        email_filename,
-        email_error,
-        combined_pdf_url,
-        status,
-        sent_at,
-        paid_at,
-        notes,
-        invoice_pdf_url,
-        created_at
-      `)
+      .select("*")
       .single()
 
     if (error) throw error
@@ -946,6 +984,22 @@ export function RecibosPage() {
     y -= 16
     summaryPage.drawText(`${resolvedPaymentIban}`, { x: margin, y, size: 11, font })
     y -= 28
+
+    if (inv.notes) {
+      summaryPage.drawText("Observaciones", {
+        x: margin,
+        y,
+        size: 13,
+        font: fontBold,
+        color: rgb(0.1, 0.15, 0.25),
+      })
+      y -= 18
+      wrapPdfText(inv.notes, font, 10, width - margin * 2).slice(0, 5).forEach((line) => {
+        summaryPage.drawText(line, { x: margin, y, size: 10, font })
+        y -= 14
+      })
+      y -= 12
+    }
 
     summaryPage.drawText("Justificantes anexos en las siguientes páginas", {
       x: margin,
@@ -1123,6 +1177,7 @@ ${appendErrors.join("\n")}`)
         "",
         `Cuenta de domiciliación: ${effectiveHolder}`,
         effectiveIban,
+        persistedInvoice.notes ? `Observaciones: ${persistedInvoice.notes}` : "",
         combinedPdfUrl ? "Copia archivada del documento: disponible en GestiDomus." : "",
         appendErrors.length > 0 ? `Avisos al anexar justificantes: ${appendErrors.join(" | ")}` : "",
         "",
@@ -1148,6 +1203,7 @@ ${appendErrors.join("\n")}`)
             ${escapeHtml(effectiveHolder)}<br />
             ${escapeHtml(effectiveIban)}
           </p>
+          ${persistedInvoice.notes ? `<p><strong>Observaciones:</strong><br />${escapeHtml(persistedInvoice.notes)}</p>` : ""}
           ${combinedPdfUrl ? "<p><strong>Copia archivada del documento:</strong> disponible en GestiDomus.</p>" : ""}
           ${appendErrors.length > 0 ? `<p style="color:#b91c1c;"><strong>Avisos al anexar justificantes:</strong> ${escapeHtml(appendErrors.join(" | "))}</p>` : ""}
           <p>Atentamente,<br />${escapeHtml(effectiveHolder)}</p>
@@ -1573,6 +1629,13 @@ ${appendErrors.join("\n")}`)
                     {viewInvoice.sent_at && <p>Enviado: {new Date(viewInvoice.sent_at).toLocaleDateString("es-ES")}</p>}
                   </div>
 
+                  {viewInvoice.notes && (
+                    <div className="border border-slate-200 bg-slate-50 rounded-md p-3 mb-4">
+                      <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Observaciones</p>
+                      <p className="text-xs text-slate-700 whitespace-pre-wrap">{viewInvoice.notes}</p>
+                    </div>
+                  )}
+
                   <div className="border-t border-slate-200 pt-4">
                     <div className="flex items-center justify-between gap-3 mb-3">
                       <div>
@@ -1696,6 +1759,16 @@ ${appendErrors.join("\n")}`)
                   <div className="md:col-span-2">
                     <label className="text-xs font-semibold text-slate-600 block mb-1">Nombre del archivo adjunto</label>
                     <Input value={emailFileName} onChange={(e) => setEmailFileName(e.target.value)} placeholder="recibo-alquiler-marzo-2026.pdf" />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="text-xs font-semibold text-slate-600 block mb-1">Observaciones</label>
+                    <textarea
+                      value={invoiceNotes}
+                      onChange={(e) => setInvoiceNotes(e.target.value)}
+                      placeholder="Observaciones internas o texto para el recibo..."
+                      className="min-h-20 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none transition-colors placeholder:text-slate-400 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+                    />
                   </div>
 
                   <div className="md:col-span-2 flex flex-wrap items-center gap-2">
@@ -1863,34 +1936,44 @@ ${appendErrors.join("\n")}`)
                   type="number"
                   step="0.01"
                   value={formGas}
-                  onChange={(e) => {
-                    setFormGas(e.target.value)
-                    setSelectedGasExpenseId(null)
-                  }}
+                  onChange={(e) => clearArchivedExpenses("gas", e.target.value)}
                   placeholder="0.00"
                   className="bg-white"
                 />
                 {expensesGas.length > 0 && (
                   <div className="mt-1 space-y-1">
-                    <Select value={selectedGasExpenseId ? String(selectedGasExpenseId) : undefined} onValueChange={(val) => setArchivedExpense("gas", val)}>
-                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Usar factura archivada de Gas" /></SelectTrigger>
+                    <Select value={undefined} onValueChange={(val) => addArchivedExpense("gas", val)}>
+                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Añadir factura archivada de Gas" /></SelectTrigger>
                       <SelectContent className="bg-white">
                         {expensesGas.map((exp) => {
-                          const isUsed = data.some(t => t.invoices.some(inv => inv.gas_expense_id === exp.id))
+                          const isSelected = selectedGasExpenseIds.includes(exp.id)
+                          const isUsed = invoiceUsesExpense(exp.id)
                           return (
                             <SelectItem 
                               key={exp.id} 
                               value={String(exp.id)}
+                              disabled={isSelected}
                               className={isUsed ? "bg-red-50 text-red-700 focus:bg-red-100 focus:text-red-800" : ""}
                             >
                               {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
-                              {isUsed && " (Ya usado)"}
+                              {isSelected ? " (Añadida)" : isUsed ? " (Ya usado)" : ""}
                             </SelectItem>
                           )
                         })}
                       </SelectContent>
                     </Select>
-                    {selectedGasExpenseId && <p className="text-[11px] text-blue-600">Este gasto quedará vinculado al recibo.</p>}
+                    {getSelectedExpenses("gas").length > 0 && (
+                      <div className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1.5 space-y-1">
+                        {getSelectedExpenses("gas").map((exp) => (
+                          <div key={exp.id} className="flex items-center justify-between gap-2 text-[11px] text-blue-800">
+                            <span className="min-w-0 truncate">{fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " · archivo" : ""}</span>
+                            <button type="button" onClick={() => removeArchivedExpense("gas", exp.id)} className="shrink-0 inline-flex h-6 w-6 items-center justify-center rounded hover:bg-blue-100 text-blue-700" title="Quitar factura">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 {loadingExpenses && <p className="text-xs text-slate-400 mt-1">Cargando facturas...</p>}
@@ -1902,34 +1985,44 @@ ${appendErrors.join("\n")}`)
                   type="number"
                   step="0.01"
                   value={formLuz}
-                  onChange={(e) => {
-                    setFormLuz(e.target.value)
-                    setSelectedLuzExpenseId(null)
-                  }}
+                  onChange={(e) => clearArchivedExpenses("luz", e.target.value)}
                   placeholder="0.00"
                   className="bg-white"
                 />
                 {expensesLuz.length > 0 && (
                   <div className="mt-1 space-y-1">
-                    <Select value={selectedLuzExpenseId ? String(selectedLuzExpenseId) : undefined} onValueChange={(val) => setArchivedExpense("luz", val)}>
-                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Usar factura archivada de Luz" /></SelectTrigger>
+                    <Select value={undefined} onValueChange={(val) => addArchivedExpense("luz", val)}>
+                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Añadir factura archivada de Luz" /></SelectTrigger>
                       <SelectContent className="bg-white">
                         {expensesLuz.map((exp) => {
-                          const isUsed = data.some(t => t.invoices.some(inv => inv.luz_expense_id === exp.id))
+                          const isSelected = selectedLuzExpenseIds.includes(exp.id)
+                          const isUsed = invoiceUsesExpense(exp.id)
                           return (
                             <SelectItem 
                               key={exp.id} 
                               value={String(exp.id)}
+                              disabled={isSelected}
                               className={isUsed ? "bg-red-50 text-red-700 focus:bg-red-100 focus:text-red-800" : ""}
                             >
                               {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
-                              {isUsed && " (Ya usado)"}
+                              {isSelected ? " (Añadida)" : isUsed ? " (Ya usado)" : ""}
                             </SelectItem>
                           )
                         })}
                       </SelectContent>
                     </Select>
-                    {selectedLuzExpenseId && <p className="text-[11px] text-blue-600">Este gasto quedará vinculado al recibo.</p>}
+                    {getSelectedExpenses("luz").length > 0 && (
+                      <div className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1.5 space-y-1">
+                        {getSelectedExpenses("luz").map((exp) => (
+                          <div key={exp.id} className="flex items-center justify-between gap-2 text-[11px] text-blue-800">
+                            <span className="min-w-0 truncate">{fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " · archivo" : ""}</span>
+                            <button type="button" onClick={() => removeArchivedExpense("luz", exp.id)} className="shrink-0 inline-flex h-6 w-6 items-center justify-center rounded hover:bg-blue-100 text-blue-700" title="Quitar factura">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1940,34 +2033,44 @@ ${appendErrors.join("\n")}`)
                   type="number"
                   step="0.01"
                   value={formAgua}
-                  onChange={(e) => {
-                    setFormAgua(e.target.value)
-                    setSelectedAguaExpenseId(null)
-                  }}
+                  onChange={(e) => clearArchivedExpenses("agua", e.target.value)}
                   placeholder="0.00"
                   className="bg-white"
                 />
                 {expensesAgua.length > 0 && (
                   <div className="mt-1 space-y-1">
-                    <Select value={selectedAguaExpenseId ? String(selectedAguaExpenseId) : undefined} onValueChange={(val) => setArchivedExpense("agua", val)}>
-                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Usar factura archivada de Agua" /></SelectTrigger>
+                    <Select value={undefined} onValueChange={(val) => addArchivedExpense("agua", val)}>
+                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Añadir factura archivada de Agua" /></SelectTrigger>
                       <SelectContent className="bg-white">
                         {expensesAgua.map((exp) => {
-                          const isUsed = data.some(t => t.invoices.some(inv => inv.agua_expense_id === exp.id))
+                          const isSelected = selectedAguaExpenseIds.includes(exp.id)
+                          const isUsed = invoiceUsesExpense(exp.id)
                           return (
                             <SelectItem 
                               key={exp.id} 
                               value={String(exp.id)}
+                              disabled={isSelected}
                               className={isUsed ? "bg-red-50 text-red-700 focus:bg-red-100 focus:text-red-800" : ""}
                             >
                               {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
-                              {isUsed && " (Ya usado)"}
+                              {isSelected ? " (Añadida)" : isUsed ? " (Ya usado)" : ""}
                             </SelectItem>
                           )
                         })}
                       </SelectContent>
                     </Select>
-                    {selectedAguaExpenseId && <p className="text-[11px] text-blue-600">Este gasto quedará vinculado al recibo.</p>}
+                    {getSelectedExpenses("agua").length > 0 && (
+                      <div className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1.5 space-y-1">
+                        {getSelectedExpenses("agua").map((exp) => (
+                          <div key={exp.id} className="flex items-center justify-between gap-2 text-[11px] text-blue-800">
+                            <span className="min-w-0 truncate">{fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " · archivo" : ""}</span>
+                            <button type="button" onClick={() => removeArchivedExpense("agua", exp.id)} className="shrink-0 inline-flex h-6 w-6 items-center justify-center rounded hover:bg-blue-100 text-blue-700" title="Quitar factura">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1980,37 +2083,57 @@ ${appendErrors.join("\n")}`)
                   type="number"
                   step="0.01"
                   value={formInternet}
-                  onChange={(e) => {
-                    setFormInternet(e.target.value)
-                    setSelectedInternetExpenseId(null)
-                  }}
+                  onChange={(e) => clearArchivedExpenses("internet", e.target.value)}
                   placeholder="0.00"
                   className="bg-white"
                 />
                 {expensesInternet.length > 0 && (
                   <div className="mt-1 space-y-1">
-                    <Select value={selectedInternetExpenseId ? String(selectedInternetExpenseId) : undefined} onValueChange={(val) => setArchivedExpense("internet", val)}>
-                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Usar factura archivada de Internet" /></SelectTrigger>
+                    <Select value={undefined} onValueChange={(val) => addArchivedExpense("internet", val)}>
+                      <SelectTrigger className="h-8 text-xs text-slate-600 bg-white border-dashed"><SelectValue placeholder="📎 Añadir factura archivada de Internet" /></SelectTrigger>
                       <SelectContent className="bg-white">
                         {expensesInternet.map((exp) => {
-                          const isUsed = data.some(t => t.invoices.some(inv => inv.internet_expense_id === exp.id))
+                          const isSelected = selectedInternetExpenseIds.includes(exp.id)
+                          const isUsed = invoiceUsesExpense(exp.id)
                           return (
                             <SelectItem 
                               key={exp.id} 
                               value={String(exp.id)}
+                              disabled={isSelected}
                               className={isUsed ? "bg-red-50 text-red-700 focus:bg-red-100 focus:text-red-800" : ""}
                             >
                               {fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " 📄" : ""}
-                              {isUsed && " (Ya usado)"}
+                              {isSelected ? " (Añadida)" : isUsed ? " (Ya usado)" : ""}
                             </SelectItem>
                           )
                         })}
                       </SelectContent>
                     </Select>
-                    {selectedInternetExpenseId && <p className="text-[11px] text-blue-600">Este gasto quedará vinculado al recibo.</p>}
+                    {getSelectedExpenses("internet").length > 0 && (
+                      <div className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1.5 space-y-1">
+                        {getSelectedExpenses("internet").map((exp) => (
+                          <div key={exp.id} className="flex items-center justify-between gap-2 text-[11px] text-blue-800">
+                            <span className="min-w-0 truncate">{fmtFecha(exp.date)} — {fmt(exp.amount)}{exp.receipt_url ? " · archivo" : ""}</span>
+                            <button type="button" onClick={() => removeArchivedExpense("internet", exp.id)} className="shrink-0 inline-flex h-6 w-6 items-center justify-center rounded hover:bg-blue-100 text-blue-700" title="Quitar factura">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-semibold text-slate-700 block mb-1">Observaciones</label>
+              <textarea
+                value={formNotes}
+                onChange={(e) => setFormNotes(e.target.value)}
+                placeholder="Escribe cualquier detalle que deba aparecer en el recibo..."
+                className="min-h-24 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none transition-colors placeholder:text-slate-400 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              />
             </div>
 
             <div className="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-3 border border-slate-200">

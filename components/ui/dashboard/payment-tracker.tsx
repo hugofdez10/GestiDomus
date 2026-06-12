@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { CheckCircle2, Circle, Download, HandCoins } from "lucide-react"
+import { CheckCircle2, Circle, Download } from "lucide-react"
 import { exportTablePdf, formatEuro } from "@/lib/pdf-export"
 import { motion, AnimatePresence } from "framer-motion"
+import { syncInvoicePaymentStatusForPropertyMonth } from "@/lib/invoice-payment-sync"
 
 const MONTHS = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
@@ -77,12 +78,18 @@ export function PaymentTracker() {
         year: selectedYear,
         amount: item.rent_price,
         is_paid: newStatus,
-        paid_at: new Date().toISOString()
+        paid_at: newStatus ? new Date().toISOString() : null
       }, { onConflict: 'property_id, month, year' })
 
     if (error) {
       alert("Error al actualizar el cobro: " + error.message)
     } else {
+      try {
+        await syncInvoicePaymentStatusForPropertyMonth(supabase, item.property_id, selectedYear, selectedMonth + 1)
+      } catch (syncError) {
+        console.error(syncError)
+        alert("Cobro actualizado, pero no se pudo sincronizar el estado del recibo.")
+      }
       fetchPayments() 
     }
   }
@@ -118,9 +125,9 @@ export function PaymentTracker() {
         <div>
           <h2 className="text-xl font-black text-slate-900 flex items-center gap-3 tracking-tight uppercase">
             <span className="text-2xl">💰</span>
-            Auditoría Mensual de Cobros
+            Tracker Mensual de Cobros
           </h2>
-          <p className="text-sm text-slate-500 font-medium">Supervisa y corrige el estado de los ingresos mes a mes.</p>
+          <p className="text-sm text-slate-500 font-medium">Marca el alquiler como cobrado y sincroniza los recibos del mes.</p>
         </div>
         
         <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-1.5 rounded-lg border">

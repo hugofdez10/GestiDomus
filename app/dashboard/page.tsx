@@ -12,7 +12,6 @@ import { FiscalReportButton } from "@/components/ui/dashboard/fiscal-report-butt
 import { TaxSimulator } from "@/components/ui/dashboard/tax-simulator"
 import { OccupancyTracker } from "@/components/ui/dashboard/occupancy-tracker"
 import { RentAction } from "@/components/ui/dashboard/rent-action"
-import { PaymentTracker } from "@/components/ui/dashboard/payment-tracker"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AlertTriangle, TrendingUp } from "lucide-react"
 import { motion, type Variants } from "framer-motion"
@@ -260,7 +259,6 @@ export default function Dashboard() {
 
       <div className="mt-8 space-y-8">
         <ContractAvisos />
-        <PaymentTracker />
         <OccupancyTracker key={`occ-${refreshKey}`} year={selectedYear} />
         <ExpenseList year={selectedYear} />
       </div>

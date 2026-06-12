@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { CalendarDays, Download } from "lucide-react"
+import { Download } from "lucide-react"
 import { exportTablePdf, formatEuro } from "@/lib/pdf-export"
 import { motion, AnimatePresence } from "framer-motion"
+import { syncInvoicePaymentStatusForPropertyMonth } from "@/lib/invoice-payment-sync"
 
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
 
@@ -94,6 +95,7 @@ function PaymentDot({ payment, monthIndex, year, propertyId, onRefresh }: {
           paid_at: new Date().toISOString(),
         }, { onConflict: "property_id, month, year" })
       }
+      await syncInvoicePaymentStatusForPropertyMonth(supabase, propertyId, parseInt(year), monthIndex + 1)
       onRefresh()
     } finally {
       setLoading(false)

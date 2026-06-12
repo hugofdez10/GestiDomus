@@ -8,8 +8,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PropertyDocs } from "./property-docs"
 import { EditPropertyForm } from "./edit-property-form"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
-import { Eye, FileDown, FileText, Home, Landmark, ShieldCheck, TrendingUp, Trash2, Zap } from "lucide-react"
+import { Eye, FileDown, FileText, Home, ImageIcon, Landmark, ShieldCheck, TrendingUp, Trash2, Video, Zap } from "lucide-react"
 import { exportTablePdf, formatEuro } from "@/lib/pdf-export"
+import { getStorageDisplayUrl } from "@/lib/storage"
 import { smoothListItemMotion } from "./smooth-motion"
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 
@@ -48,10 +49,31 @@ type PropertyRow = {
   currentTenantName?: string
   healthColor?: string
   roi?: number
+  coverUrl?: string | null
+  coverKind?: "image" | "video" | null
+  mediaCount?: number
 }
 
 type PropertyContract = ContractWithTenantLike & {
   monthly_rent?: number | null
+}
+
+type PropertyDocumentRow = {
+  property_id: number | string
+  name?: string | null
+  url?: string | null
+  type?: string | null
+}
+
+function getDocumentKind(doc?: PropertyDocumentRow | null): "image" | "video" | "document" {
+  const value = `${doc?.type || ""} ${doc?.name || ""} ${doc?.url || ""}`.toLowerCase()
+  if (/\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(value) || ["png", "jpg", "jpeg", "webp", "gif", "avif"].some((ext) => value.includes(ext))) {
+    return "image"
+  }
+  if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(value) || ["mp4", "webm", "mov", "m4v"].some((ext) => value.includes(ext))) {
+    return "video"
+  }
+  return "document"
 }
 
 function supplyValue(supplies: PropertyRow["supplies"], key: string, field: "company" | "contract") {
@@ -107,20 +129,34 @@ export function PropertyList({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const fetchProperties = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true)
-    const [propertiesRes, contractsRes] = await Promise.all([
+    const [propertiesRes, contractsRes, documentsRes] = await Promise.all([
       supabase
         .from('properties')
         .select('*, expenses(amount)'),
       supabase
         .from("contracts")
         .select("id, property_id, tenant_id, contract_status, start_date, end_date, monthly_rent, tenants(full_name)"),
+      supabase
+        .from("property_documents")
+        .select("property_id, name, url, type"),
     ])
     const { data, error } = propertiesRes
     const contracts = (contractsRes.data || []) as unknown as PropertyContract[]
+    const documents = (documentsRes.data || []) as PropertyDocumentRow[]
+    const documentsByProperty = new Map<number, PropertyDocumentRow[]>()
+
+    documents.forEach((doc) => {
+      const propertyId = Number(doc.property_id)
+      if (!Number.isFinite(propertyId)) return
+      const current = documentsByProperty.get(propertyId) || []
+      current.push(doc)
+      documentsByProperty.set(propertyId, current)
+    })
     
     if (!error && data) {
-      const formatted = (data as PropertyRow[])
-        .map(p => {
+      const formatted = await Promise.all(
+        (data as PropertyRow[])
+        .map(async (p) => {
           const activeContract = getActiveContractForProperty(p.id, contracts)
           const tenantRelation = activeContract?.tenants
           const activeTenant = Array.isArray(tenantRelation) ? tenantRelation[0] : tenantRelation
@@ -135,14 +171,24 @@ export function PropertyList({ refreshKey = 0 }: { refreshKey?: number }) {
           if (totalExp > (monthlyRent * 0.5)) healthColor = "bg-red-500"
           else if (totalExp > (monthlyRent * 0.2)) healthColor = "bg-amber-500"
 
-          return { ...p, currentTenantName: activeTenant?.full_name || "Vacante", healthColor, roi }
+          const mediaDocs = (documentsByProperty.get(p.id) || []).filter((doc) => getDocumentKind(doc) !== "document")
+          const coverDoc = mediaDocs.find((doc) => getDocumentKind(doc) === "image") || mediaDocs[0] || null
+          const coverUrl = coverDoc?.url
+            ? await getStorageDisplayUrl(supabase, "property-docs", coverDoc.url).catch(() => null)
+            : null
+          const coverKind = coverDoc ? (getDocumentKind(coverDoc) as "image" | "video") : null
+
+          return { ...p, currentTenantName: activeTenant?.full_name || "Vacante", healthColor, roi, coverUrl, coverKind, mediaCount: mediaDocs.length }
         })
+      )
+
+      const sorted = formatted
         // ORDEN ALFABÉTICO POR NOMBRE
         .sort((a, b) =>
           (a.name || "").localeCompare(b.name || "", "es", { sensitivity: "base" })
         )
 
-      setProperties(formatted)
+      setProperties(sorted)
     }
     if (!silent) setLoading(false)
   }, [])
@@ -229,9 +275,30 @@ export function PropertyList({ refreshKey = 0 }: { refreshKey?: number }) {
                   </TableCell>
 
                   <TableCell>
-                    <p className="font-bold text-slate-700">{p.name}</p>
-                    <p className="text-[10px] text-slate-400 uppercase tracking-tighter">{statusLabel(p.status)}</p>
-                    {p.address && <p className="text-xs text-slate-400 mt-0.5 truncate max-w-[260px]">{p.address}</p>}
+                    <div className="flex items-center gap-3">
+                      <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-md border bg-slate-100">
+                        {p.coverUrl && p.coverKind === "image" ? (
+                          <img src={p.coverUrl} alt={`Portada de ${p.name || "inmueble"}`} className="h-full w-full object-cover" />
+                        ) : p.coverUrl && p.coverKind === "video" ? (
+                          <video src={p.coverUrl} className="h-full w-full object-cover" muted preload="metadata" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-slate-300">
+                            <Home className="h-7 w-7" />
+                          </div>
+                        )}
+                        {p.mediaCount ? (
+                          <span className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                            {p.coverKind === "video" ? <Video className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
+                            {p.mediaCount}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-700">{p.name}</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-tighter">{statusLabel(p.status)}</p>
+                        {p.address && <p className="text-xs text-slate-400 mt-0.5 truncate max-w-[260px]">{p.address}</p>}
+                      </div>
+                    </div>
                   </TableCell>
 
                   <TableCell>
@@ -262,6 +329,19 @@ export function PropertyList({ refreshKey = 0 }: { refreshKey?: number }) {
                           </SheetHeader>
 
                           <div className="mt-6 space-y-5">
+                            <section className="overflow-hidden rounded-xl border bg-slate-100">
+                              {p.coverUrl && p.coverKind === "image" ? (
+                                <img src={p.coverUrl} alt={`Portada de ${p.name || "inmueble"}`} className="h-52 w-full object-cover" />
+                              ) : p.coverUrl && p.coverKind === "video" ? (
+                                <video src={p.coverUrl} className="h-52 w-full object-cover" controls preload="metadata" />
+                              ) : (
+                                <div className="flex h-40 flex-col items-center justify-center text-slate-400">
+                                  <Home className="h-10 w-10" />
+                                  <p className="mt-2 text-xs font-semibold">Sin portada</p>
+                                </div>
+                              )}
+                            </section>
+
                             <section className="rounded-xl border bg-white p-4">
                               <h3 className="mb-2 flex items-center gap-2 text-sm font-black text-slate-800">
                                 <Home className="w-4 h-4 text-blue-600" /> Datos del inmueble
@@ -332,7 +412,7 @@ export function PropertyList({ refreshKey = 0 }: { refreshKey?: number }) {
                             <SheetTitle>Expediente: {p.name}</SheetTitle>
                           </SheetHeader>
                           <div className="mt-6">
-                            <PropertyDocs propertyId={String(p.id)} />
+                            <PropertyDocs propertyId={String(p.id)} onChange={() => fetchProperties({ silent: true })} />
                           </div>
                         </SheetContent>
                       </Sheet>

@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { EditExpenseForm } from "./edit-expense-form"
 import { exportTablePdf, formatDateEs, formatEuro } from "@/lib/pdf-export"
 import { getStorageDisplayUrl } from "@/lib/storage"
+import { syncInvoicePaymentStatusForExpense } from "@/lib/invoice-payment-sync"
 
 const CONCEPTOS = [
   "Seguro", "Limpieza", "Comunidad", "Electricidad", "Gas", 
@@ -63,7 +64,15 @@ export function ExpenseList({ year: globalYear }: { year: string }) {
   async function markAsPaidByTenant(id: number) {
     const { error } = await supabase.from('expenses').update({ is_tenant_paid: true }).eq('id', id)
     if (error) alert("Error al actualizar: " + error.message)
-    else fetchData()
+    else {
+      try {
+        await syncInvoicePaymentStatusForExpense(supabase, id)
+      } catch (syncError) {
+        console.error(syncError)
+        alert("Gasto actualizado, pero no se pudo sincronizar el estado del recibo.")
+      }
+      fetchData()
+    }
   }
 
   async function handleDelete(id: number) {

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Pencil, UploadCloud, UserCircle, Home, ExternalLink } from "lucide-react"
 import { getStorageDisplayUrl } from "@/lib/storage"
+import { syncInvoicePaymentStatusForExpense } from "@/lib/invoice-payment-sync"
 
 export function EditExpenseForm({ expense, onUpdate }: { expense: any, onUpdate: () => void }) {
   const [open, setOpen] = useState(false)
@@ -87,6 +88,12 @@ export function EditExpenseForm({ expense, onUpdate }: { expense: any, onUpdate:
     if (error) {
       alert("❌ Error al actualizar: " + error.message)
     } else {
+      try {
+        await syncInvoicePaymentStatusForExpense(supabase, expense.id)
+      } catch (syncError) {
+        console.error(syncError)
+        alert("Gasto actualizado, pero no se pudo sincronizar el estado del recibo.")
+      }
       setOpen(false)
       onUpdate()
     }
